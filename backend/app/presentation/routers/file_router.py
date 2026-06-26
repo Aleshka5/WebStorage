@@ -26,6 +26,7 @@ from app.infrastructure.storage.base_adapter import READ_CHUNK_SIZE
 from app.presentation.dependencies.auth import get_current_user, get_quota_repository
 from app.presentation.dependencies.files import get_file_service
 from app.presentation.routers.quota_router import _resolve_limit_bytes
+from app.presentation.utils.content_disposition import build_attachment_content_disposition
 from app.presentation.schemas.files import (
     FileNodeResponse,
     FileRecordResponse,
@@ -243,7 +244,7 @@ async def download_file(
     return StreamingResponse(
         stream,
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": build_attachment_content_disposition(filename)},
     )
 
 

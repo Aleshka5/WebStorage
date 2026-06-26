@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.file_record import FileRecord as FileRecordEntity
@@ -122,6 +122,114 @@ class FileRepository:
             section.value,
         )
         return records
+
+    async def count_by_user_section(self, user_id: UUID, section: FileSection) -> int:
+        result = await self._session.execute(
+            select(func.count())
+            .select_from(FileRecordModel)
+            .where(
+                FileRecordModel.user_id == user_id,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+            )
+        )
+        return int(result.scalar_one())
+
+    async def list_by_user_section_paginated(
+        self,
+        user_id: UUID,
+        section: FileSection,
+        *,
+        offset: int,
+        limit: int,
+    ) -> list[FileRecordEntity]:
+        result = await self._session.execute(
+            select(FileRecordModel)
+            .where(
+                FileRecordModel.user_id == user_id,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+            )
+            .order_by(FileRecordModel.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        records = [self._to_entity(model) for model in result.scalars().all()]
+        logger.info(
+            "Listed {} paginated file records for user {} in section {} (offset={}, limit={})",
+            len(records),
+            user_id,
+            section.value,
+            offset,
+            limit,
+        )
+        return records
+
+    async def update_relative_path_prefix(
+        self,
+        user_id: UUID,
+        section: FileSection,
+        old_prefix: str,
+        new_prefix: str,
+    ) -> int:
+        prefix_with_slash = f"{old_prefix}/"
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.user_id == user_id,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+                FileRecordModel.relative_path.startswith(prefix_with_slash),
+            )
+        )
+        models = list(result.scalars().all())
+        for model in models:
+            model.relative_path = f"{new_prefix}{model.relative_path[len(old_prefix):]}"
+
+        if models:
+            await self._session.flush()
+
+        logger.info(
+            "Updated relative_path prefix for {} file records: {} -> {}",
+            len(models),
+            old_prefix,
+            new_prefix,
+        )
+        return len(models)
+
+    async def heal_stale_relative_path(
+        self,
+        user_id: UUID,
+        section: FileSection,
+        correct_relative_path: str,
+        original_name: str,
+    ) -> FileRecordEntity | None:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.user_id == user_id,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+                FileRecordModel.original_name == original_name,
+            )
+        )
+        models = list(result.scalars().all())
+
+        if len(models) != 1:
+            return None
+
+        model = models[0]
+        if model.relative_path == correct_relative_path:
+            return self._to_entity(model)
+
+        logger.warning(
+            "Healing stale relative_path for file {}: {} -> {}",
+            model.id,
+            model.relative_path,
+            correct_relative_path,
+        )
+        model.relative_path = correct_relative_path
+        await self._session.flush()
+        await self._session.refresh(model)
+        return self._to_entity(model)
 
     async def delete(self, file_id: UUID) -> FileRecordEntity | None:
         model = await self._session.get(FileRecordModel, file_id)

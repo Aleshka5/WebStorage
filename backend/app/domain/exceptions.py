@@ -24,3 +24,7 @@ class FileNotFoundError(Exception):
 
 class AccessDeniedError(Exception):
     """Raised when a user attempts to access a resource they do not own."""
+
+
+class UnsupportedFormatError(Exception):
+    """Raised when an uploaded file format is not supported."""

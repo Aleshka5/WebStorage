@@ -26,3 +26,23 @@ export function validatePasswordMatch(
   }
   return undefined;
 }
+
+const INVALID_FILE_NAME_CHARS = /[/\\:*?"<>|]/;
+
+export function validateFileName(name: string): string | undefined {
+  const trimmed = name.trim();
+
+  if (!trimmed) {
+    return "Введите имя";
+  }
+
+  if (trimmed === "." || trimmed === "..") {
+    return "Недопустимое имя";
+  }
+
+  if (INVALID_FILE_NAME_CHARS.test(trimmed)) {
+    return 'Имя содержит недопустимые символы: / \\ : * ? " < > |';
+  }
+
+  return undefined;
+}

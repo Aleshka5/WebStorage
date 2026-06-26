@@ -159,9 +159,9 @@ class FileService:
             return
 
         disk_relative_path = self._adapter.to_disk_relative_path(normalized)
-        record = await self._file_repo.get_committed_by_relative_path(
+        record = await self._get_record_by_section_path(
             user_id,
-            disk_relative_path,
+            normalized,
             FileSection.FILES,
         )
         if record is None:
@@ -174,6 +174,29 @@ class FileService:
             return
 
         await self.delete_file(user_id, record.id)
+
+    async def _get_record_by_section_path(
+        self,
+        user_id: UUID,
+        section_path: str,
+        section: FileSection,
+    ) -> FileRecord | None:
+        disk_relative_path = self._adapter.to_disk_relative_path(section_path)
+        record = await self._file_repo.get_committed_by_relative_path(
+            user_id,
+            disk_relative_path,
+            section,
+        )
+        if record is not None:
+            return record
+
+        filename = PurePosixPath(section_path).name
+        return await self._file_repo.heal_stale_relative_path(
+            user_id,
+            section,
+            disk_relative_path,
+            filename,
+        )
 
     async def rename_by_path(
         self,
@@ -191,6 +214,8 @@ class FileService:
         new_path = new_name if not parent else f"{parent}/{new_name}"
 
         if target.is_dir():
+            old_disk_prefix = self._adapter.to_disk_relative_path(normalized)
+            new_disk_prefix = self._adapter.to_disk_relative_path(new_path)
             logger.info(
                 "Renaming directory {} to {} for user {}",
                 normalized,
@@ -198,12 +223,17 @@ class FileService:
                 user_id,
             )
             await self._adapter.rename(normalized, new_path)
+            await self._file_repo.update_relative_path_prefix(
+                user_id,
+                FileSection.FILES,
+                old_disk_prefix,
+                new_disk_prefix,
+            )
             return None
 
-        disk_relative_path = self._adapter.to_disk_relative_path(normalized)
-        record = await self._file_repo.get_committed_by_relative_path(
+        record = await self._get_record_by_section_path(
             user_id,
-            disk_relative_path,
+            normalized,
             FileSection.FILES,
         )
         if record is None:
