@@ -8,6 +8,7 @@ from passlib.context import CryptContext
 from app.domain.entities.user import User
 from app.domain.exceptions import EmailAlreadyExistsError, InvalidCredentialsError
 from app.infrastructure.database.repositories.user_repo import UserRepository
+from app.infrastructure.oauth_client import GoogleUserInfo
 from config import Settings, get_settings
 
 JWT_ALGORITHM = "HS256"
@@ -52,6 +53,38 @@ class AuthService:
 
         token = self._create_access_token(user.id)
         logger.info("User {} logged in successfully", user.id)
+        return token
+
+    async def login_or_create_google_user(self, google_user_info: GoogleUserInfo) -> str:
+        logger.info("Google OAuth login attempt for email {}", google_user_info.email)
+
+        user = await self._user_repo.get_by_google_id(google_user_info.google_id)
+        if user is not None:
+            if not user.is_active:
+                logger.warning("Google login failed: user {} is inactive", user.id)
+                raise InvalidCredentialsError("Invalid email or password")
+            token = self._create_access_token(user.id)
+            logger.info("Existing Google user {} logged in successfully", user.id)
+            return token
+
+        user = await self._user_repo.get_by_email(google_user_info.email)
+        if user is not None:
+            if not user.is_active:
+                logger.warning("Google login failed: user {} is inactive", user.id)
+                raise InvalidCredentialsError("Invalid email or password")
+            if user.google_id is None:
+                user = await self._user_repo.link_google_id(user.id, google_user_info.google_id)
+                assert user is not None
+            token = self._create_access_token(user.id)
+            logger.info("Existing user {} linked and logged in via Google", user.id)
+            return token
+
+        user = await self._user_repo.create(
+            email=google_user_info.email,
+            google_id=google_user_info.google_id,
+        )
+        token = self._create_access_token(user.id)
+        logger.info("New Google user {} created and logged in successfully", user.id)
         return token
 
     async def get_user_by_id(self, user_id: UUID) -> User | None:

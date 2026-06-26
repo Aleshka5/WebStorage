@@ -6,6 +6,7 @@ from app.domain.entities.user import User
 from app.domain.value_objects.error_codes import ErrorCode
 from app.infrastructure.database.repositories.user_repo import UserRepository
 from app.infrastructure.database.session import get_async_session
+from app.infrastructure.oauth_client import GoogleOAuthClient
 from config import get_settings
 
 ACCESS_TOKEN_COOKIE = "access_token"
@@ -21,6 +22,10 @@ def get_auth_service(
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> AuthService:
     return AuthService(user_repo, get_settings())
+
+
+def get_google_oauth_client() -> GoogleOAuthClient:
+    return GoogleOAuthClient(get_settings())
 
 
 async def get_current_user(

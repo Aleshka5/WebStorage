@@ -6,6 +6,10 @@ from loguru import logger
 from config import get_settings
 
 _PRIVATE_KEY_PREFIX = "private_key:"
+_OAUTH_STATE_PREFIX = "oauth_state:"
+_OAUTH_TICKET_PREFIX = "oauth_ticket:"
+_OAUTH_STATE_TTL_SECONDS = 600
+_OAUTH_TICKET_TTL_SECONDS = 120
 
 
 class SessionStore:
@@ -29,6 +33,34 @@ class SessionStore:
         redis_key = f"{_PRIVATE_KEY_PREFIX}{session_id}"
         await self._redis.delete(redis_key)
         logger.info("Deleted private key for session {}", session_id)
+
+    async def store_oauth_state(self, state: str) -> None:
+        redis_key = f"{_OAUTH_STATE_PREFIX}{state}"
+        await self._redis.setex(redis_key, _OAUTH_STATE_TTL_SECONDS, "1")
+        logger.info("Stored OAuth state with TTL {} seconds", _OAUTH_STATE_TTL_SECONDS)
+
+    async def consume_oauth_state(self, state: str) -> bool:
+        redis_key = f"{_OAUTH_STATE_PREFIX}{state}"
+        deleted = await self._redis.delete(redis_key)
+        if deleted:
+            logger.info("OAuth state consumed successfully")
+            return True
+        logger.warning("OAuth state not found or already consumed")
+        return False
+
+    async def store_oauth_ticket(self, ticket: str, access_token: str) -> None:
+        redis_key = f"{_OAUTH_TICKET_PREFIX}{ticket}"
+        await self._redis.setex(redis_key, _OAUTH_TICKET_TTL_SECONDS, access_token)
+        logger.info("Stored OAuth login ticket with TTL {} seconds", _OAUTH_TICKET_TTL_SECONDS)
+
+    async def consume_oauth_ticket(self, ticket: str) -> str | None:
+        redis_key = f"{_OAUTH_TICKET_PREFIX}{ticket}"
+        value = await self._redis.getdel(redis_key)
+        if value is None:
+            logger.warning("OAuth login ticket not found or already consumed")
+            return None
+        logger.info("OAuth login ticket consumed successfully")
+        return value
 
     async def close(self) -> None:
         await self._redis.aclose()

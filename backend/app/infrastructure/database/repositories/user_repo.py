@@ -21,6 +21,15 @@ class UserRepository:
             return None
         return self._to_entity(model)
 
+    async def get_by_google_id(self, google_id: str) -> UserEntity | None:
+        result = await self._session.execute(
+            select(UserModel).where(UserModel.google_id == google_id)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return None
+        return self._to_entity(model)
+
     async def get_by_id(self, user_id: UUID) -> UserEntity | None:
         model = await self._session.get(UserModel, user_id)
         if model is None:
@@ -30,12 +39,14 @@ class UserRepository:
     async def create(
         self,
         email: str,
-        password_hash: str,
+        password_hash: str | None = None,
+        google_id: str | None = None,
         role: Role = Role.STRANGER,
     ) -> UserEntity:
         model = UserModel(
             email=email,
             password_hash=password_hash,
+            google_id=google_id,
             role=UserRole(role.value),
             is_active=True,
         )
@@ -43,6 +54,17 @@ class UserRepository:
         await self._session.flush()
         await self._session.refresh(model)
         logger.info("Created user {} with role {}", model.id, model.role.value)
+        return self._to_entity(model)
+
+    async def link_google_id(self, user_id: UUID, google_id: str) -> UserEntity | None:
+        model = await self._session.get(UserModel, user_id)
+        if model is None:
+            logger.warning("User {} not found for Google ID linking", user_id)
+            return None
+        model.google_id = google_id
+        await self._session.flush()
+        await self._session.refresh(model)
+        logger.info("Linked Google ID for user {}", user_id)
         return self._to_entity(model)
 
     async def update_role(self, user_id: UUID, role: Role) -> UserEntity | None:
@@ -62,6 +84,7 @@ class UserRepository:
             id=model.id,
             email=model.email,
             password_hash=model.password_hash,
+            google_id=model.google_id,
             role=Role(model.role.value),
             is_active=model.is_active,
             created_at=model.created_at,

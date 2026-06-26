@@ -34,6 +34,11 @@ class AuthSettings(BaseSettings):
 
     google_client_id: str = Field(default="", validation_alias="GOOGLE_CLIENT_ID")
     google_client_secret: str = Field(default="", validation_alias="GOOGLE_CLIENT_SECRET")
+    google_redirect_uri: str = Field(
+        default="http://localhost:8000/api/auth/google/callback",
+        validation_alias="GOOGLE_REDIRECT_URI",
+    )
+    frontend_url: str = Field(default="http://localhost:5173", validation_alias="FRONTEND_URL")
     jwt_secret: str = Field(default="change-me", validation_alias="JWT_SECRET")
     session_ttl_seconds: int = Field(default=86400, validation_alias="SESSION_TTL_SECONDS")
     private_session_ttl_hours: int = Field(

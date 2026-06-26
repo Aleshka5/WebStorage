@@ -29,6 +29,8 @@ docker compose up --build -d
 
 Проверка API: [http://localhost:8000](http://localhost:8000) — ответ `{"status": "ok", "version": "1.0"}`.
 
+При каждом старте контейнера `app` автоматически выполняется `alembic upgrade head`.
+
 ### Frontend (Vite + React)
 
 Frontend не входит в `docker-compose`. Запуск отдельно:

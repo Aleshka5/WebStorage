@@ -20,4 +20,6 @@ dependencies = [
     "apscheduler",
     "pydantic-settings",
     "loguru",
+    "httpx",
+    "email-validator",
 ]

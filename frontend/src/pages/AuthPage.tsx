@@ -188,7 +188,14 @@ export default function AuthPage() {
             <Button type="submit" isLoading={isLoading} className="mt-2">
               Войти
             </Button>
-            <Button type="button" variant="secondary" disabled className="opacity-60">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={isLoading}
+              onClick={() => {
+                window.location.href = "/api/auth/google";
+              }}
+            >
               <span className="inline-flex items-center gap-2">
                 <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
                   <path

@@ -10,6 +10,7 @@ class User:
     id: UUID
     email: str
     password_hash: str | None
+    google_id: str | None
     role: Role
     is_active: bool
     created_at: datetime
