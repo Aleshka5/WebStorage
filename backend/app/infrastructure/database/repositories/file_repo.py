@@ -102,6 +102,38 @@ class FileRepository:
             return None
         return self._to_entity(model)
 
+    async def get_committed_by_relative_path_in_section(
+        self,
+        relative_path: str,
+        section: FileSection,
+    ) -> FileRecordEntity | None:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.relative_path == relative_path,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+            )
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    async def list_by_section(
+        self,
+        section: FileSection,
+        *,
+        limit: int | None = None,
+    ) -> list[FileRecordEntity]:
+        stmt = select(FileRecordModel).where(
+            FileRecordModel.section == FileSectionModel(section.value),
+            FileRecordModel.status == FileStatusModel.COMMITTED,
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await self._session.execute(stmt)
+        return [self._to_entity(model) for model in result.scalars().all()]
+
     async def list_by_user_section(
         self,
         user_id: UUID,
@@ -196,6 +228,35 @@ class FileRepository:
         )
         return len(models)
 
+    async def update_relative_path_prefix_in_section(
+        self,
+        section: FileSection,
+        old_prefix: str,
+        new_prefix: str,
+    ) -> int:
+        prefix_with_slash = f"{old_prefix}/"
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+                FileRecordModel.relative_path.startswith(prefix_with_slash),
+            )
+        )
+        models = list(result.scalars().all())
+        for model in models:
+            model.relative_path = f"{new_prefix}{model.relative_path[len(old_prefix):]}"
+
+        if models:
+            await self._session.flush()
+
+        logger.info(
+            "Updated relative_path prefix for {} shared file records: {} -> {}",
+            len(models),
+            old_prefix,
+            new_prefix,
+        )
+        return len(models)
+
     async def heal_stale_relative_path(
         self,
         user_id: UUID,
@@ -222,6 +283,39 @@ class FileRepository:
 
         logger.warning(
             "Healing stale relative_path for file {}: {} -> {}",
+            model.id,
+            model.relative_path,
+            correct_relative_path,
+        )
+        model.relative_path = correct_relative_path
+        await self._session.flush()
+        await self._session.refresh(model)
+        return self._to_entity(model)
+
+    async def heal_stale_relative_path_in_section(
+        self,
+        section: FileSection,
+        correct_relative_path: str,
+        original_name: str,
+    ) -> FileRecordEntity | None:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+                FileRecordModel.original_name == original_name,
+            )
+        )
+        models = list(result.scalars().all())
+
+        if len(models) != 1:
+            return None
+
+        model = models[0]
+        if model.relative_path == correct_relative_path:
+            return self._to_entity(model)
+
+        logger.warning(
+            "Healing stale relative_path for shared file {}: {} -> {}",
             model.id,
             model.relative_path,
             correct_relative_path,

@@ -7,6 +7,7 @@ from loguru import logger
 
 from app.domain.entities.file_record import FileRecord, FileSection, FileStatus
 from app.domain.exceptions import AccessDeniedError, FileNotFoundError
+from app.domain.value_objects.role import Role
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.storage.base_adapter import FileNode, StorageAdapter
@@ -98,32 +99,39 @@ class FileService:
             await self._file_repo.delete(record.id)
             raise
 
-    async def download_file(self, user_id: UUID, file_id: UUID) -> AsyncIterator[bytes]:
-        record = await self._get_committed_record(user_id, file_id)
+    async def download_file(self, actor_id: UUID, file_id: UUID) -> AsyncIterator[bytes]:
+        record = await self._get_committed_record(file_id, actor_id)
         section_path = self._to_section_path(record)
-        logger.info("Downloading file {} for user {}", file_id, user_id)
+        logger.info("Downloading file {} for user {}", file_id, actor_id)
 
         async for chunk in self._adapter.read(section_path):
             yield chunk
 
-    async def delete_file(self, user_id: UUID, file_id: UUID) -> None:
-        record = await self._get_committed_record(user_id, file_id)
+    async def delete_file(
+        self,
+        actor_id: UUID,
+        file_id: UUID,
+        *,
+        actor_role: Role | None = None,
+    ) -> None:
+        record = await self._get_committed_record(file_id, actor_id)
+        self._ensure_can_delete_record(record, actor_id, actor_role)
         section_path = self._to_section_path(record)
 
         if await self._adapter.exists(section_path):
             await self._adapter.delete(section_path)
 
         await self._file_repo.delete(file_id)
-        await self._quota_repo.decrement(user_id, record.size_bytes, record.section)
-        logger.info("Deleted file {} for user {}", file_id, user_id)
+        await self._quota_repo.decrement(record.user_id, record.size_bytes, record.section)
+        logger.info("Deleted file {} by user {}", file_id, actor_id)
 
     async def create_directory(self, user_id: UUID, path: str, name: str) -> None:
         dir_path = self._join_path(self._normalize_path(path), name)
         logger.info("Creating directory {} for user {}", dir_path, user_id)
         await self._adapter.mkdir(dir_path)
 
-    async def rename(self, user_id: UUID, file_id: UUID, new_name: str) -> FileRecord:
-        record = await self._get_committed_record(user_id, file_id)
+    async def rename(self, actor_id: UUID, file_id: UUID, new_name: str) -> FileRecord:
+        record = await self._get_committed_record(file_id, actor_id)
         old_section_path = self._to_section_path(record)
         parent = str(PurePosixPath(old_section_path).parent)
         new_section_path = (
@@ -140,7 +148,7 @@ class FileService:
         if updated is None:
             raise FileNotFoundError(f"File record {file_id} not found after rename")
 
-        logger.info("Renamed file {} to {} for user {}", file_id, new_name, user_id)
+        logger.info("Renamed file {} to {} for user {}", file_id, new_name, actor_id)
         return updated
 
     async def read_by_path(self, path: str) -> AsyncIterator[bytes]:
@@ -149,20 +157,25 @@ class FileService:
         async for chunk in self._adapter.read(normalized):
             yield chunk
 
-    async def delete_by_path(self, user_id: UUID, path: str) -> None:
+    async def delete_by_path(
+        self,
+        actor_id: UUID,
+        path: str,
+        *,
+        actor_role: Role | None = None,
+    ) -> None:
         normalized = self._normalize_path(path)
         if not await self._adapter.exists(normalized):
             raise FileNotFoundError(f"Path {path!r} not found")
 
         is_dir = await self._is_directory(normalized)
         if is_dir:
-            logger.info("Deleting directory {} for user {}", normalized, user_id)
+            logger.info("Deleting directory {} for user {}", normalized, actor_id)
             await self._adapter.delete(normalized)
             return
 
-        disk_relative_path = self._adapter.to_disk_relative_path(normalized)
         record = await self._get_record_by_section_path(
-            user_id,
+            actor_id,
             normalized,
             self._section,
         )
@@ -170,12 +183,12 @@ class FileService:
             logger.warning(
                 "Deleting untracked file at path {} for user {}",
                 normalized,
-                user_id,
+                actor_id,
             )
             await self._adapter.delete(normalized)
             return
 
-        await self.delete_file(user_id, record.id)
+        await self.delete_file(actor_id, record.id, actor_role=actor_role)
 
     async def _get_record_by_section_path(
         self,
@@ -184,6 +197,21 @@ class FileService:
         section: FileSection,
     ) -> FileRecord | None:
         disk_relative_path = self._adapter.to_disk_relative_path(section_path)
+        if section == FileSection.SHARED:
+            record = await self._file_repo.get_committed_by_relative_path_in_section(
+                disk_relative_path,
+                section,
+            )
+            if record is not None:
+                return record
+
+            filename = PurePosixPath(section_path).name
+            return await self._file_repo.heal_stale_relative_path_in_section(
+                section,
+                disk_relative_path,
+                filename,
+            )
+
         record = await self._file_repo.get_committed_by_relative_path(
             user_id,
             disk_relative_path,
@@ -224,12 +252,19 @@ class FileService:
                 user_id,
             )
             await self._adapter.rename(normalized, new_path)
-            await self._file_repo.update_relative_path_prefix(
-                user_id,
-                self._section,
-                old_disk_prefix,
-                new_disk_prefix,
-            )
+            if self._section == FileSection.SHARED:
+                await self._file_repo.update_relative_path_prefix_in_section(
+                    self._section,
+                    old_disk_prefix,
+                    new_disk_prefix,
+                )
+            else:
+                await self._file_repo.update_relative_path_prefix(
+                    user_id,
+                    self._section,
+                    old_disk_prefix,
+                    new_disk_prefix,
+                )
             return None
 
         record = await self._get_record_by_section_path(
@@ -249,12 +284,28 @@ class FileService:
             return False
         return True
 
-    async def _get_committed_record(self, user_id: UUID, file_id: UUID) -> FileRecord:
+    def _ensure_can_delete_record(
+        self,
+        record: FileRecord,
+        actor_id: UUID,
+        actor_role: Role | None,
+    ) -> None:
+        if self._section == FileSection.SHARED:
+            if actor_role != Role.ADMIN and record.user_id != actor_id:
+                raise AccessDeniedError(
+                    f"User {actor_id} cannot delete shared file owned by {record.user_id}",
+                )
+            return
+
+        if record.user_id != actor_id:
+            raise AccessDeniedError(f"User {actor_id} cannot delete file {record.id}")
+
+    async def _get_committed_record(self, file_id: UUID, actor_id: UUID) -> FileRecord:
         record = await self._file_repo.get_by_id(file_id)
         if record is None or record.status != FileStatus.COMMITTED:
             raise FileNotFoundError(f"File {file_id} not found")
-        if record.user_id != user_id:
-            raise AccessDeniedError(f"User {user_id} cannot access file {file_id}")
+        if self._section != FileSection.SHARED and record.user_id != actor_id:
+            raise AccessDeniedError(f"User {actor_id} cannot access file {file_id}")
         return record
 
     def _to_section_path(self, record: FileRecord) -> str:
