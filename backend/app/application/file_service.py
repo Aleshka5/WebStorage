@@ -141,6 +141,76 @@ class FileService:
         logger.info("Renamed file {} to {} for user {}", file_id, new_name, user_id)
         return updated
 
+    async def read_by_path(self, path: str) -> AsyncIterator[bytes]:
+        normalized = self._normalize_path(path)
+        logger.info("Reading file at path {}", normalized)
+        async for chunk in self._adapter.read(normalized):
+            yield chunk
+
+    async def delete_by_path(self, user_id: UUID, path: str) -> None:
+        normalized = self._normalize_path(path)
+        target = self._adapter._safe_path(self._adapter.base_path, normalized)  # noqa: SLF001
+        if not target.exists():
+            raise FileNotFoundError(f"Path {path!r} not found")
+
+        if target.is_dir():
+            logger.info("Deleting directory {} for user {}", normalized, user_id)
+            await self._adapter.delete(normalized)
+            return
+
+        disk_relative_path = self._adapter.to_disk_relative_path(normalized)
+        record = await self._file_repo.get_committed_by_relative_path(
+            user_id,
+            disk_relative_path,
+            FileSection.FILES,
+        )
+        if record is None:
+            logger.warning(
+                "Deleting untracked file at path {} for user {}",
+                normalized,
+                user_id,
+            )
+            await self._adapter.delete(normalized)
+            return
+
+        await self.delete_file(user_id, record.id)
+
+    async def rename_by_path(
+        self,
+        user_id: UUID,
+        path: str,
+        new_name: str,
+    ) -> FileRecord | None:
+        normalized = self._normalize_path(path)
+        target = self._adapter._safe_path(self._adapter.base_path, normalized)  # noqa: SLF001
+        if not target.exists():
+            raise FileNotFoundError(f"Path {path!r} not found")
+
+        parent = str(PurePosixPath(normalized).parent)
+        parent = "" if parent in (".", "") else parent
+        new_path = new_name if not parent else f"{parent}/{new_name}"
+
+        if target.is_dir():
+            logger.info(
+                "Renaming directory {} to {} for user {}",
+                normalized,
+                new_path,
+                user_id,
+            )
+            await self._adapter.rename(normalized, new_path)
+            return None
+
+        disk_relative_path = self._adapter.to_disk_relative_path(normalized)
+        record = await self._file_repo.get_committed_by_relative_path(
+            user_id,
+            disk_relative_path,
+            FileSection.FILES,
+        )
+        if record is None:
+            raise FileNotFoundError(f"File record for path {path!r} not found")
+
+        return await self.rename(user_id, record.id, new_name)
+
     async def _get_committed_record(self, user_id: UUID, file_id: UUID) -> FileRecord:
         record = await self._file_repo.get_by_id(file_id)
         if record is None or record.status != FileStatus.COMMITTED:

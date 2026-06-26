@@ -83,6 +83,25 @@ class FileRepository:
         logger.info("Updated file record {} status to {}", file_id, status.value)
         return self._to_entity(model)
 
+    async def get_committed_by_relative_path(
+        self,
+        user_id: UUID,
+        relative_path: str,
+        section: FileSection,
+    ) -> FileRecordEntity | None:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.user_id == user_id,
+                FileRecordModel.relative_path == relative_path,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+            )
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return None
+        return self._to_entity(model)
+
     async def list_by_user_section(
         self,
         user_id: UUID,
