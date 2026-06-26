@@ -9,6 +9,7 @@ import {
   Settings,
   Users,
 } from "lucide-react";
+import { StorageUsageBar } from "./StorageUsageBar";
 
 const STORAGE_KEY = "homecloud-sidebar-expanded";
 
@@ -67,7 +68,7 @@ export function Sidebar() {
         </button>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-1 px-2 pb-4">
+      <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2">
         {MENU_ITEMS.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
@@ -104,6 +105,8 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      {expanded && <StorageUsageBar />}
     </aside>
   );
 }

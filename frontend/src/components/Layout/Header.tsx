@@ -3,9 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { UserCircle } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
 
-const MOCK_USED_MB = 45;
-const MOCK_LIMIT_MB = 100;
-
 export function Header() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
@@ -13,7 +10,6 @@ export function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const usedPercent = Math.min(100, Math.round((MOCK_USED_MB / MOCK_LIMIT_MB) * 100));
   const displayEmail = user?.email ?? "user@example.com";
 
   useEffect(() => {
@@ -36,24 +32,10 @@ export function Header() {
   };
 
   return (
-    <header className="flex h-14 shrink-0 items-center border-b border-zinc-800 bg-zinc-900 px-6">
-      <div className="flex w-40 shrink-0 items-center">
-        <span className="text-lg font-semibold tracking-tight text-zinc-100">HomeCloud</span>
-      </div>
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 sm:px-6">
+      <span className="text-lg font-semibold tracking-tight text-zinc-100">HomeCloud</span>
 
-      <div className="flex flex-1 flex-col items-center gap-1 px-4">
-        <div className="h-2 w-full max-w-md overflow-hidden rounded-full bg-zinc-800">
-          <div
-            className="h-full rounded-full bg-sky-500 transition-all duration-300"
-            style={{ width: `${usedPercent}%` }}
-          />
-        </div>
-        <span className="text-xs text-zinc-400">
-          {MOCK_USED_MB} МБ из {MOCK_LIMIT_MB} МБ
-        </span>
-      </div>
-
-      <div className="relative flex w-40 shrink-0 justify-end" ref={menuRef}>
+      <div className="relative" ref={menuRef}>
         <button
           type="button"
           onClick={() => setMenuOpen((prev) => !prev)}
