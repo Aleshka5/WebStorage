@@ -1,9 +1,16 @@
 from pathlib import Path
 
 from loguru import logger
-from PIL import Image
+from PIL import Image, ImageOps
 
-SUPPORTED_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "GIF"})
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except ImportError:
+    logger.warning("pillow-heif is not installed; HEIC/HEIF previews will be unavailable")
+
+SUPPORTED_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "GIF", "HEIF", "HEIC"})
 JPEG_QUALITY = 85
 
 
@@ -24,6 +31,8 @@ class ThumbnailService:
 
             if image_format == "GIF":
                 image.seek(0)
+
+            image = ImageOps.exif_transpose(image)
 
             if image.mode in ("RGBA", "P", "LA"):
                 image = image.convert("RGB")

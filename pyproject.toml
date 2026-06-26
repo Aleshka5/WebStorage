@@ -15,6 +15,7 @@ dependencies = [
     "passlib[bcrypt]",
     "bcrypt<5.0.0",
     "pillow",
+    "pillow-heif",
     "cryptography",
     "zstandard",
     "apscheduler",

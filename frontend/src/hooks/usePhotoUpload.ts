@@ -1,28 +1,40 @@
 import { useCallback, useState } from "react";
 import { getApiErrorDetail } from "../services/api";
-import { uploadFile } from "../services/filesApi";
+import { uploadPhoto } from "../services/photosApi";
+import type { PhotoItem } from "../types/photos";
+import { normalizePhotoFiles } from "../utils/photoUpload";
 import { generateId } from "../utils/id";
 
-export type UploadStatus = "uploading" | "done" | "error";
+export type PhotoUploadStatus = "uploading" | "done" | "error";
 
-export interface UploadFileState {
+export interface PhotoUploadState {
   id: string;
   name: string;
   progress: number;
-  status: UploadStatus;
+  status: PhotoUploadStatus;
   error_code?: string;
+  photo?: PhotoItem;
 }
 
-export function useFileUpload(apiPrefix: string) {
-  const [uploads, setUploads] = useState<UploadFileState[]>([]);
+export function usePhotoUpload() {
+  const [uploads, setUploads] = useState<PhotoUploadState[]>([]);
 
-  const uploadFiles = useCallback(
-    async (files: File[], path: string) => {
+  const uploadPhotos = useCallback(
+    async (files: File[], onUploaded?: (photo: PhotoItem) => void) => {
       if (files.length === 0) {
         return;
       }
 
-      const pendingUploads: UploadFileState[] = files.map((file) => ({
+      let normalizedFiles: File[];
+
+      try {
+        normalizedFiles = normalizePhotoFiles(files);
+      } catch (error) {
+        console.error("Failed to normalize photo files", error);
+        return;
+      }
+
+      const pendingUploads: PhotoUploadState[] = normalizedFiles.map((file) => ({
         id: generateId(),
         name: file.name,
         progress: 0,
@@ -32,11 +44,11 @@ export function useFileUpload(apiPrefix: string) {
       setUploads((current) => [...current, ...pendingUploads]);
 
       await Promise.all(
-        files.map(async (file, index) => {
+        normalizedFiles.map(async (file, index) => {
           const uploadId = pendingUploads[index].id;
 
           try {
-            await uploadFile(apiPrefix, path, file, (progress) => {
+            const photo = await uploadPhoto(file, (progress) => {
               setUploads((current) =>
                 current.map((item) =>
                   item.id === uploadId ? { ...item, progress } : item,
@@ -47,10 +59,12 @@ export function useFileUpload(apiPrefix: string) {
             setUploads((current) =>
               current.map((item) =>
                 item.id === uploadId
-                  ? { ...item, progress: 100, status: "done" }
+                  ? { ...item, progress: 100, status: "done", photo }
                   : item,
               ),
             );
+
+            onUploaded?.(photo);
           } catch (error) {
             const detail = getApiErrorDetail(error);
 
@@ -69,12 +83,12 @@ export function useFileUpload(apiPrefix: string) {
         }),
       );
     },
-    [apiPrefix],
+    [],
   );
 
   const clearFinished = useCallback(() => {
     setUploads((current) => current.filter((item) => item.status === "uploading"));
   }, []);
 
-  return { uploads, uploadFiles, clearFinished };
+  return { uploads, uploadPhotos, clearFinished };
 }

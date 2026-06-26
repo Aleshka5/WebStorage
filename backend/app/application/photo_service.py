@@ -21,7 +21,7 @@ from config import get_settings
 DEFAULT_MIME_TYPE = "application/octet-stream"
 ORIGINALS_DIR = "originals"
 PREVIEWS_DIR = "previews"
-SUPPORTED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+SUPPORTED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif"})
 
 
 @dataclass(frozen=True)
