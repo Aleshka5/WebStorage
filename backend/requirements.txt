@@ -13,3 +13,4 @@ zstandard
 apscheduler
 pydantic-settings
 loguru
+email-validator
