@@ -104,12 +104,30 @@ class DiskRouter:
         return result
 
     def _probe_free_space(self, disk: DiskVolume) -> int | None:
+        space_info = self._probe_disk_space(disk)
+        if space_info is None:
+            return None
+        return space_info["free_bytes"]
+
+    def get_disk_space_stats(self, disk_id: str) -> dict[str, int] | None:
+        disk = self.get_disk_by_id(disk_id)
+        return self._probe_disk_space(disk)
+
+    def _probe_disk_space(self, disk: DiskVolume) -> dict[str, int] | None:
         mount_path = disk.mount_path
         if not mount_path.exists():
             return None
         try:
             stat = os.statvfs(mount_path)
-            return stat.f_frsize * stat.f_bavail
+            block_size = stat.f_frsize
+            total_bytes = stat.f_blocks * block_size
+            free_bytes = stat.f_bavail * block_size
+            used_bytes = total_bytes - free_bytes
+            return {
+                "total_bytes": total_bytes,
+                "used_bytes": used_bytes,
+                "free_bytes": free_bytes,
+            }
         except OSError:
             logger.warning("Failed to stat disk {} at {}", disk.id, mount_path)
             return None

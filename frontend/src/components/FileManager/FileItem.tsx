@@ -13,6 +13,7 @@ import { validateFileName } from "../../utils/validation";
 
 interface FileItemProps {
   item: FileNode;
+  showUploader?: boolean;
   onOpenFolder: (path: string) => void;
   onDownload: (item: FileNode) => Promise<void>;
   onRename: (item: FileNode, newName: string) => Promise<void>;
@@ -21,6 +22,7 @@ interface FileItemProps {
 
 export function FileItem({
   item,
+  showUploader = false,
   onOpenFolder,
   onDownload,
   onRename,
@@ -147,17 +149,22 @@ export function FileItem({
               {renameError && <p className="text-xs text-red-400">{renameError}</p>}
             </div>
           ) : (
-            <button
-              type="button"
-              className="max-w-full truncate text-left text-sm text-zinc-100 hover:text-sky-300"
-              onClick={() => {
-                if (item.is_dir) {
-                  onOpenFolder(item.path);
-                }
-              }}
-            >
-              {item.name}
-            </button>
+            <div className="min-w-0">
+              <button
+                type="button"
+                className="max-w-full truncate text-left text-sm text-zinc-100 hover:text-sky-300"
+                onClick={() => {
+                  if (item.is_dir) {
+                    onOpenFolder(item.path);
+                  }
+                }}
+              >
+                {item.name}
+              </button>
+              {showUploader && !item.is_dir && item.uploaded_by && (
+                <p className="mt-0.5 truncate text-xs text-zinc-500">{item.uploaded_by}</p>
+              )}
+            </div>
           )}
         </td>
         <td className="hidden px-3 py-3 text-sm text-zinc-400 sm:table-cell">

@@ -30,8 +30,52 @@ class FileService:
         self._section = section
 
     async def list_directory(self, user_id: UUID, path: str) -> list[FileNode]:
+        normalized = self._normalize_path(path)
         logger.info("Listing directory for user {} at path {}", user_id, path)
-        return await self._adapter.list(self._normalize_path(path))
+        nodes = await self._adapter.list(normalized)
+
+        if self._section != FileSection.SHARED:
+            return nodes
+
+        file_nodes = [node for node in nodes if not node.is_dir]
+        if not file_nodes:
+            return nodes
+
+        relative_paths = [
+            self._adapter.to_disk_relative_path(self._join_path(normalized, node.name))
+            for node in file_nodes
+        ]
+        uploaders = await self._file_repo.get_uploaders_by_relative_paths_in_section(
+            relative_paths,
+            FileSection.SHARED,
+        )
+
+        enriched: list[FileNode] = []
+        for node in nodes:
+            if node.is_dir:
+                enriched.append(node)
+                continue
+
+            relative_path = self._adapter.to_disk_relative_path(
+                self._join_path(normalized, node.name),
+            )
+            uploaded_by = uploaders.get(relative_path)
+            enriched.append(
+                FileNode(
+                    name=node.name,
+                    is_dir=node.is_dir,
+                    size=node.size,
+                    modified_at=node.modified_at,
+                    uploaded_by=uploaded_by,
+                )
+            )
+
+        logger.info(
+            "Enriched {} shared files with uploader info at path {}",
+            len(file_nodes),
+            path,
+        )
+        return enriched
 
     async def upload_file(
         self,

@@ -13,6 +13,7 @@ class FileNodeResponse(BaseModel):
     size: int = Field(ge=0)
     modified_at: datetime
     path: str
+    uploaded_by: str | None = None
 
     @classmethod
     def from_node(cls, node: FileNode, path: str) -> "FileNodeResponse":
@@ -22,6 +23,7 @@ class FileNodeResponse(BaseModel):
             size=node.size,
             modified_at=node.modified_at,
             path=path,
+            uploaded_by=node.uploaded_by,
         )
 
 

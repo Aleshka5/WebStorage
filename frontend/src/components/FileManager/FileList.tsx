@@ -5,6 +5,7 @@ import { FileItem } from "./FileItem";
 interface FileListProps {
   items: FileNode[];
   isLoading: boolean;
+  showUploader?: boolean;
   sortField: SortField;
   sortDirection: SortDirection;
   onSortChange: (field: SortField) => void;
@@ -66,6 +67,7 @@ function SortableHeader({
 export function FileList({
   items,
   isLoading,
+  showUploader = false,
   sortField,
   sortDirection,
   onSortChange,
@@ -126,6 +128,7 @@ export function FileList({
               <FileItem
                 key={item.path}
                 item={item}
+                showUploader={showUploader}
                 onOpenFolder={onOpenFolder}
                 onDownload={onDownload}
                 onRename={onRename}

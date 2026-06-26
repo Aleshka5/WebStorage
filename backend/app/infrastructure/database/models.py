@@ -62,12 +62,23 @@ class User(Base):
         nullable=False,
     )
 
-    file_records: Mapped[list["FileRecord"]] = relationship(back_populates="user")
+    file_records: Mapped[list["FileRecord"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     quota_usage: Mapped["UserQuotaUsage | None"] = relationship(
         back_populates="user",
         uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        single_parent=True,
     )
-    upload_sessions: Mapped[list["UploadSession"]] = relationship(back_populates="user")
+    upload_sessions: Mapped[list["UploadSession"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class FileRecord(Base):
@@ -126,6 +137,7 @@ class UserQuotaUsage(Base):
     )
     total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     private_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    private_limit_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     photos_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

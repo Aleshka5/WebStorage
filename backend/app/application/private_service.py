@@ -139,7 +139,7 @@ class PrivateService:
         usage = await self._quota_repo.get_by_user_id(user_id)
         return {
             "private_bytes": usage.private_bytes,
-            "private_limit_bytes": 0,
+            "private_limit_bytes": usage.private_limit_bytes,
         }
 
     async def get_session_status(self, session_id: str) -> dict[str, int | bool]:

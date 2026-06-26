@@ -4,6 +4,7 @@ export interface FileNode {
   size: number;
   modified_at: string;
   path: string;
+  uploaded_by?: string | null;
 }
 
 export type FileManagerMode = "plain" | "encrypted";

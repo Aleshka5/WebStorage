@@ -9,6 +9,7 @@ from app.domain.entities.file_record import FileSection, FileStatus
 from app.infrastructure.database.models import FileRecord as FileRecordModel
 from app.infrastructure.database.models import FileSection as FileSectionModel
 from app.infrastructure.database.models import FileStatus as FileStatusModel
+from app.infrastructure.database.models import User as UserModel
 
 
 class FileRepository:
@@ -102,6 +103,32 @@ class FileRepository:
             return None
         return self._to_entity(model)
 
+    async def get_uploaders_by_relative_paths_in_section(
+        self,
+        relative_paths: list[str],
+        section: FileSection,
+    ) -> dict[str, str]:
+        if not relative_paths:
+            return {}
+
+        result = await self._session.execute(
+            select(FileRecordModel.relative_path, UserModel.email)
+            .join(UserModel, UserModel.id == FileRecordModel.user_id)
+            .where(
+                FileRecordModel.relative_path.in_(relative_paths),
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+            )
+        )
+        uploaders = {relative_path: email for relative_path, email in result.all()}
+        logger.info(
+            "Resolved uploaders for {} of {} shared paths in section {}",
+            len(uploaders),
+            len(relative_paths),
+            section.value,
+        )
+        return uploaders
+
     async def get_committed_by_relative_path_in_section(
         self,
         relative_path: str,
@@ -153,6 +180,14 @@ class FileRepository:
             user_id,
             section.value,
         )
+        return records
+
+    async def list_all_by_user(self, user_id: UUID) -> list[FileRecordEntity]:
+        result = await self._session.execute(
+            select(FileRecordModel).where(FileRecordModel.user_id == user_id)
+        )
+        records = [self._to_entity(model) for model in result.scalars().all()]
+        logger.info("Listed {} file records for user {}", len(records), user_id)
         return records
 
     async def count_by_user_section(self, user_id: UUID, section: FileSection) -> int:

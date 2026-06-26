@@ -16,6 +16,7 @@ class FileNode:
     is_dir: bool
     size: int
     modified_at: datetime
+    uploaded_by: str | None = None
 
 
 class StorageAdapter(ABC):

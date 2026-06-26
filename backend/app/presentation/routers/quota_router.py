@@ -54,5 +54,5 @@ async def get_my_quota(
         used_bytes=usage.total_bytes,
         limit_bytes=limit_bytes,
         private_bytes=usage.private_bytes,
-        private_limit_bytes=0,
+        private_limit_bytes=usage.private_limit_bytes,
     )

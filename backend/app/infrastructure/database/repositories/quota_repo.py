@@ -21,6 +21,7 @@ class QuotaRepository:
             user_id=user_id,
             total_bytes=0,
             private_bytes=0,
+            private_limit_bytes=0,
             photos_bytes=0,
         )
         self._session.add(model)
@@ -119,5 +120,24 @@ class QuotaRepository:
             "Reset private quota for user {} (removed {} bytes from total usage)",
             user_id,
             private_bytes,
+        )
+        return model
+
+    async def update_private_limit(self, user_id: UUID, limit_bytes: int) -> UserQuotaUsage:
+        await self.get_by_user_id(user_id)
+
+        stmt = (
+            update(UserQuotaUsage)
+            .where(UserQuotaUsage.user_id == user_id)
+            .values(private_limit_bytes=limit_bytes)
+            .returning(UserQuotaUsage)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one()
+        await self._session.refresh(model)
+        logger.info(
+            "Updated private limit for user {} to {} bytes",
+            user_id,
+            limit_bytes,
         )
         return model

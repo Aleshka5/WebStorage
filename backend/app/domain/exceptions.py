@@ -32,3 +32,15 @@ class UnsupportedFormatError(Exception):
 
 class PrivateSessionExpiredError(Exception):
     """Raised when the private encryption session key is missing or expired."""
+
+
+class UserNotFoundError(Exception):
+    """Raised when a requested user does not exist."""
+
+
+class SelfRoleChangeError(Exception):
+    """Raised when an admin attempts to change their own role."""
+
+
+class SelfUserDeletionError(Exception):
+    """Raised when an admin attempts to delete their own account."""

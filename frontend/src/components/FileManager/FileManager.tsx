@@ -309,6 +309,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
         <FileList
           items={sortedItems}
           isLoading={isLoading}
+          showUploader={apiPrefix === "/api/shared"}
           sortField={sortField}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}
