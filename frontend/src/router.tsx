@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { AppLayout } from "./components/Layout/AppLayout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import AdminPage from "./pages/AdminPage";
 import AuthPage from "./pages/AuthPage";
+import FilesPage from "./pages/FilesPage";
+import PhotosPage from "./pages/PhotosPage";
+import PrivatePage from "./pages/PrivatePage";
+import SharedPage from "./pages/SharedPage";
 import { useAuthStore } from "./store/auth";
 
 function RootRedirect() {
@@ -19,24 +25,22 @@ function AuthRoute() {
   return <AuthPage />;
 }
 
-function FilesPlaceholder() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-400">
-      <p className="text-sm">/files — страница будет добавлена позже</p>
-    </div>
-  );
-}
-
 const router = createBrowserRouter([
   { path: "/", element: <RootRedirect /> },
   { path: "/auth", element: <AuthRoute /> },
   {
-    path: "/files",
     element: (
       <ProtectedRoute>
-        <FilesPlaceholder />
+        <AppLayout />
       </ProtectedRoute>
     ),
+    children: [
+      { path: "/files", element: <FilesPage /> },
+      { path: "/photos", element: <PhotosPage /> },
+      { path: "/private", element: <PrivatePage /> },
+      { path: "/shared", element: <SharedPage /> },
+      { path: "/admin", element: <AdminPage /> },
+    ],
   },
 ]);
 
