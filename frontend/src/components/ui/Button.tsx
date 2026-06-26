@@ -41,10 +41,10 @@ export function Button({
       {...props}
     >
       {isLoading ? (
-        <span className="inline-flex items-center gap-2">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-          Загрузка...
-        </span>
+        <span
+          className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+          aria-label="Загрузка"
+        />
       ) : (
         children
       )}

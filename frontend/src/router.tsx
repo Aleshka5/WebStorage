@@ -1,14 +1,22 @@
+import { useEffect, useState } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { ProtectedRoute } from "./components/ProtectedRoute";
 import AuthPage from "./pages/AuthPage";
-
-const AUTH_TOKEN_KEY = "homecloud_auth";
-
-export function hasAuthToken(): boolean {
-  return localStorage.getItem(AUTH_TOKEN_KEY) === "1";
-}
+import { useAuthStore } from "./store/auth";
 
 function RootRedirect() {
-  return <Navigate to={hasAuthToken() ? "/files" : "/auth"} replace />;
+  const user = useAuthStore((state) => state.user);
+  return <Navigate to={user ? "/files" : "/auth"} replace />;
+}
+
+function AuthRoute() {
+  const user = useAuthStore((state) => state.user);
+
+  if (user) {
+    return <Navigate to="/files" replace />;
+  }
+
+  return <AuthPage />;
 }
 
 function FilesPlaceholder() {
@@ -21,10 +29,36 @@ function FilesPlaceholder() {
 
 const router = createBrowserRouter([
   { path: "/", element: <RootRedirect /> },
-  { path: "/auth", element: <AuthPage /> },
-  { path: "/files", element: <FilesPlaceholder /> },
+  { path: "/auth", element: <AuthRoute /> },
+  {
+    path: "/files",
+    element: (
+      <ProtectedRoute>
+        <FilesPlaceholder />
+      </ProtectedRoute>
+    ),
+  },
 ]);
 
+function SessionBootstrap() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-zinc-950">
+      <span className="h-8 w-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+    </div>
+  );
+}
+
 export function AppRouter() {
+  const fetchMe = useAuthStore((state) => state.fetchMe);
+  const [sessionReady, setSessionReady] = useState(false);
+
+  useEffect(() => {
+    void fetchMe().finally(() => setSessionReady(true));
+  }, [fetchMe]);
+
+  if (!sessionReady) {
+    return <SessionBootstrap />;
+  }
+
   return <RouterProvider router={router} />;
 }

@@ -41,12 +41,16 @@ npm run dev
 
 Интерфейс: [http://localhost:5173](http://localhost:5173).
 
-Через Docker (альтернатива):
+Через Docker (альтернатива; backend должен быть доступен на порту 8000 хоста):
 
 ```bash
 docker build -t homecloud-frontend ./frontend
 docker run --rm -p 5173:5173 homecloud-frontend
 ```
+
+Proxy Vite по умолчанию направляет `/api` на `http://host.docker.internal:8000` (для контейнера).
+При локальном `npm run dev` используется `http://localhost:8000`.
+Переопределение: `API_PROXY_TARGET=http://app:8000 npm run dev`.
 
 ## Полезные команды
 

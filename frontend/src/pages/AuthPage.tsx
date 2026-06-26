@@ -1,7 +1,8 @@
 import { FormEvent, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
-import { Modal } from "../components/ui/Modal";
+import { AuthError, useAuthStore } from "../store/auth";
 import {
   validateEmail,
   validatePasswordMatch,
@@ -27,9 +28,10 @@ interface FormErrors {
   confirmPassword?: string;
 }
 
-const SUBMIT_DELAY_MS = 1000;
-
 export default function AuthPage() {
+  const navigate = useNavigate();
+  const { login, register, isLoading } = useAuthStore();
+
   const [activeTab, setActiveTab] = useState<AuthTab>("login");
   const [loginForm, setLoginForm] = useState<LoginForm>({ email: "", password: "" });
   const [registerForm, setRegisterForm] = useState<RegisterForm>({
@@ -38,11 +40,6 @@ export default function AuthPage() {
     confirmPassword: "",
   });
   const [errors, setErrors] = useState<FormErrors>({});
-  const [isLoading, setIsLoading] = useState(false);
-  const [successModal, setSuccessModal] = useState<{ isOpen: boolean; message: string }>({
-    isOpen: false,
-    message: "",
-  });
 
   const resetErrors = () => setErrors({});
 
@@ -77,14 +74,15 @@ export default function AuthPage() {
     return nextErrors;
   };
 
-  const simulateSubmit = async (payload: LoginForm | RegisterForm, successMessage: string) => {
-    console.log(payload);
-    setIsLoading(true);
+  const applyAuthError = (error: unknown): void => {
+    if (error instanceof AuthError && error.field) {
+      setErrors({ [error.field]: error.message });
+      return;
+    }
 
-    await new Promise((resolve) => setTimeout(resolve, SUBMIT_DELAY_MS));
-
-    setIsLoading(false);
-    setSuccessModal({ isOpen: true, message: successMessage });
+    if (error instanceof AuthError) {
+      setErrors({ password: error.message });
+    }
   };
 
   const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -96,10 +94,12 @@ export default function AuthPage() {
       return;
     }
 
-    await simulateSubmit(
-      { email: loginForm.email.trim(), password: loginForm.password },
-      "Вход выполнен успешно",
-    );
+    try {
+      await login(loginForm.email.trim(), loginForm.password);
+      navigate("/files", { replace: true });
+    } catch (error) {
+      applyAuthError(error);
+    }
   };
 
   const handleRegisterSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -111,14 +111,12 @@ export default function AuthPage() {
       return;
     }
 
-    await simulateSubmit(
-      {
-        email: registerForm.email.trim(),
-        password: registerForm.password,
-        confirmPassword: registerForm.confirmPassword,
-      },
-      "Аккаунт успешно создан",
-    );
+    try {
+      await register(registerForm.email.trim(), registerForm.password);
+      navigate("/files", { replace: true });
+    } catch (error) {
+      applyAuthError(error);
+    }
   };
 
   return (
@@ -255,20 +253,6 @@ export default function AuthPage() {
           </form>
         )}
       </div>
-
-      <Modal
-        isOpen={successModal.isOpen}
-        onClose={() => setSuccessModal({ isOpen: false, message: "" })}
-        title="Готово"
-      >
-        <p className="mb-5 text-sm text-zinc-300">{successModal.message}</p>
-        <Button
-          variant="secondary"
-          onClick={() => setSuccessModal({ isOpen: false, message: "" })}
-        >
-          Закрыть
-        </Button>
-      </Modal>
     </div>
   );
 }
