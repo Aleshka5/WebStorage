@@ -22,4 +22,5 @@ dependencies = [
     "loguru",
     "httpx",
     "email-validator",
+    "aiofiles",
 ]
