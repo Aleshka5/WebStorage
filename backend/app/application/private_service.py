@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import shutil
 from pathlib import Path
 from uuid import UUID
 
@@ -87,6 +89,31 @@ class PrivateService:
     async def lock(self, session_id: str) -> None:
         await self._session_store.delete_private_key(session_id)
         logger.info("Private section locked for session {}", session_id)
+
+    async def reset_storage(self, user_id: UUID, session_id: str) -> None:
+        logger.info("Resetting private storage for user {}", user_id)
+
+        await self._session_store.delete_private_key(session_id)
+
+        disk_id = await self._resolve_user_disk_id(user_id)
+        base_path = self._private_base_path(user_id, disk_id)
+
+        if base_path.exists():
+            await asyncio.to_thread(shutil.rmtree, base_path)
+
+        base_path.mkdir(parents=True, exist_ok=True)
+
+        deleted_records = await self._file_repo.delete_all_by_user_section(
+            user_id,
+            FileSection.PRIVATE,
+        )
+        await self._quota_repo.reset_private_usage(user_id)
+
+        logger.info(
+            "Private storage reset completed for user {} ({} file records removed)",
+            user_id,
+            deleted_records,
+        )
 
     async def get_file_service(self, user_id: UUID, session_id: str) -> FileService:
         encoded_key = await self._session_store.get_private_key(session_id)

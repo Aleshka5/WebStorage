@@ -231,6 +231,30 @@ class FileRepository:
         await self._session.refresh(model)
         return self._to_entity(model)
 
+    async def delete_all_by_user_section(self, user_id: UUID, section: FileSection) -> int:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.user_id == user_id,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+            )
+        )
+        models = list(result.scalars().all())
+
+        for model in models:
+            model.status = FileStatusModel.DELETED
+
+        if models:
+            await self._session.flush()
+
+        logger.info(
+            "Marked {} file records as deleted for user {} in section {}",
+            len(models),
+            user_id,
+            section.value,
+        )
+        return len(models)
+
     async def delete(self, file_id: UUID) -> FileRecordEntity | None:
         model = await self._session.get(FileRecordModel, file_id)
         if model is None:

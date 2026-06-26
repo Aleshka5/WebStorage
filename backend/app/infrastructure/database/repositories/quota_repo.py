@@ -94,3 +94,30 @@ class QuotaRepository:
             section.value,
         )
         return model
+
+    async def reset_private_usage(self, user_id: UUID) -> UserQuotaUsage:
+        usage = await self.get_by_user_id(user_id)
+        private_bytes = usage.private_bytes
+
+        if private_bytes == 0:
+            logger.info("Private quota already zero for user {}", user_id)
+            return usage
+
+        stmt = (
+            update(UserQuotaUsage)
+            .where(UserQuotaUsage.user_id == user_id)
+            .values(
+                total_bytes=UserQuotaUsage.total_bytes - private_bytes,
+                private_bytes=0,
+            )
+            .returning(UserQuotaUsage)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one()
+        await self._session.refresh(model)
+        logger.info(
+            "Reset private quota for user {} (removed {} bytes from total usage)",
+            user_id,
+            private_bytes,
+        )
+        return model

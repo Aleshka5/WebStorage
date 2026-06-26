@@ -128,7 +128,7 @@ class EncryptedStorageAdapter(StorageAdapter):
         data: AsyncIterator[bytes],
         size: int,
     ) -> str:
-        encrypted_path = self._encrypt_path(path)
+        encrypted_path = await self._to_encrypted_path(path)
         hasher = hashlib.sha256()
         bytes_written = 0
 
@@ -159,12 +159,12 @@ class EncryptedStorageAdapter(StorageAdapter):
         await self._inner.delete(encrypted_path)
 
     async def mkdir(self, path: str) -> None:
-        encrypted_path = self._encrypt_path(path)
+        encrypted_path = await self._to_encrypted_path(path)
         await self._inner.mkdir(encrypted_path)
 
     async def rename(self, old_path: str, new_path: str) -> None:
         encrypted_old = await self._resolve_encrypted_path(old_path)
-        encrypted_new = self._encrypt_path(new_path)
+        encrypted_new = await self._to_encrypted_path(new_path)
         await self._inner.rename(encrypted_old, encrypted_new)
 
     async def exists(self, path: str) -> bool:
@@ -209,18 +209,22 @@ class EncryptedStorageAdapter(StorageAdapter):
                 total += len(chunk)
         return total
 
-    def _encrypt_path(self, logical_path: str) -> str:
+    async def _to_encrypted_path(self, logical_path: str) -> str:
         normalized = self._normalize_path(logical_path)
         if not normalized:
             return ""
         if self._is_plain_storage_path(normalized):
             return normalized
 
-        encrypted_segments = [
-            segment if segment.startswith(".") else self.encrypt_name(segment)
-            for segment in normalized.split("/")
-        ]
-        return "/".join(encrypted_segments)
+        segments = normalized.split("/")
+        if len(segments) == 1:
+            return self.encrypt_name(segments[0])
+
+        parent_logical = "/".join(segments[:-1])
+        leaf_name = segments[-1]
+        parent_encrypted = await self._resolve_encrypted_path(parent_logical)
+        leaf_encrypted = self.encrypt_name(leaf_name)
+        return self._join_encrypted_path(parent_encrypted, leaf_encrypted)
 
     async def _resolve_encrypted_path(self, logical_path: str) -> str:
         normalized = self._normalize_path(logical_path)

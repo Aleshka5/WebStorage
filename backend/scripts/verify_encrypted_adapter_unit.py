@@ -21,6 +21,8 @@ async def _run_adapter_roundtrip(base_path: Path, key: bytes) -> None:
     inner = PlainStorageAdapter(base_path, disk_id="disk1")
     adapter = EncryptedStorageAdapter(inner=inner, key=key)
 
+    await adapter.mkdir("docs")
+
     async def data_stream():
         yield b"hello encrypted world"
 
@@ -43,6 +45,32 @@ async def _run_adapter_roundtrip(base_path: Path, key: bytes) -> None:
     assert nodes[0].size == len(payload)
 
 
+async def _run_nested_mkdir_same_name(base_path: Path, key: bytes) -> None:
+    inner = PlainStorageAdapter(base_path, disk_id="disk1")
+    adapter = EncryptedStorageAdapter(inner=inner, key=key)
+
+    await adapter.mkdir("shared")
+    await adapter.mkdir("parent")
+    await adapter.mkdir("shared/inner")
+
+    root_nodes = await adapter.list("")
+    root_names = {node.name for node in root_nodes if node.is_dir}
+    assert root_names == {"parent", "shared"}
+
+    shared_nodes = await adapter.list("shared")
+    shared_names = {node.name for node in shared_nodes if node.is_dir}
+    assert shared_names == {"inner"}
+
+    await adapter.mkdir("parent/shared")
+    parent_nodes = await adapter.list("parent")
+    parent_names = {node.name for node in parent_nodes if node.is_dir}
+    assert parent_names == {"shared"}
+
+    root_nodes_after = await adapter.list("")
+    root_names_after = {node.name for node in root_nodes_after if node.is_dir}
+    assert root_names_after == {"parent", "shared"}
+
+
 def main() -> int:
     user_id = uuid.uuid4()
     key = derive_encryption_key("phase5-test-passphrase", user_id)
@@ -58,12 +86,16 @@ def main() -> int:
 
     test_root = Path("/storage/disk1/users") / str(uuid.uuid4()) / "private"
     test_root.mkdir(parents=True, exist_ok=True)
+    nested_test_root = Path("/storage/disk1/users") / str(uuid.uuid4()) / "private"
+    nested_test_root.mkdir(parents=True, exist_ok=True)
     try:
         asyncio.run(_run_adapter_roundtrip(test_root, key))
+        asyncio.run(_run_nested_mkdir_same_name(nested_test_root, key))
     finally:
         import shutil
 
         shutil.rmtree(test_root.parent.parent, ignore_errors=True)
+        shutil.rmtree(nested_test_root.parent.parent, ignore_errors=True)
 
     print("All EncryptedStorageAdapter unit checks passed")
     return 0

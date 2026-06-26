@@ -217,6 +217,43 @@ async def lock_private_section(
     logger.info("Private section locked for session")
 
 
+@router.post("/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_private_storage(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    private_service: PrivateService = Depends(get_private_service),
+    session_store: SessionStore = Depends(get_session_store),
+    session: AsyncSession = Depends(get_async_session),
+) -> None:
+    session_id = _get_session_id(request)
+    client_ip = _client_ip(request)
+
+    attempts = await session_store.get_unlock_attempts(str(current_user.id), client_ip)
+    if attempts < UNLOCK_RATE_LIMIT_MAX_ATTEMPTS:
+        logger.warning(
+            "Private reset denied for user {} from IP {}: rate limit not reached",
+            current_user.id,
+            client_ip,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": ErrorCode.ACCESS_DENIED,
+                "message": "Private storage reset is available only after too many unlock attempts",
+            },
+        )
+
+    try:
+        await private_service.reset_storage(current_user.id, session_id)
+        await session_store.reset_unlock_attempts(str(current_user.id), client_ip)
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        _raise_http_for_domain_error(exc)
+
+    logger.info("Private storage reset for user {}", current_user.id)
+
+
 @router.get("/quota", response_model=PrivateQuotaResponse)
 async def get_private_quota(
     current_user: User = Depends(get_current_user),

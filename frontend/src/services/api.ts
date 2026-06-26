@@ -1,6 +1,7 @@
 import axios, { isAxiosError } from "axios";
 
 export const PRIVATE_SESSION_EXPIRED_EVENT = "homecloud:private-session-expired";
+export const EVENT_PRIVATE_EXPIRED = PRIVATE_SESSION_EXPIRED_EVENT;
 
 export interface ApiErrorDetail {
   error_code?: string;
