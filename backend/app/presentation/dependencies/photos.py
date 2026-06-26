@@ -15,6 +15,7 @@ from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.disk_router import DiskRouter
 from app.infrastructure.storage.plain_adapter import PlainStorageAdapter
 from app.infrastructure.thumbnail_service import ThumbnailService
+from app.presentation.dependencies.archive_providers import get_archive_manager
 from app.presentation.dependencies.auth import get_current_user, get_quota_repository
 from app.presentation.dependencies.files import get_file_repository
 from config import get_settings
@@ -79,4 +80,11 @@ async def get_photo_service(
         disk_id,
         base_path,
     )
-    return PhotoService(adapter, thumbnail_service, file_repo, quota_repo, disk_router)
+    return PhotoService(
+        adapter,
+        thumbnail_service,
+        file_repo,
+        quota_repo,
+        disk_router,
+        archive_manager=get_archive_manager(),
+    )

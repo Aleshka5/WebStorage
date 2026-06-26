@@ -122,6 +122,14 @@ class EncryptedStorageAdapter(StorageAdapter):
             async for chunk in self._decrypt_stream(file_handle):
                 yield chunk
 
+    async def read_encrypted_blob(self, file_path: Path) -> AsyncIterator[bytes]:
+        if not file_path.is_file():
+            raise FileNotFoundError(f"Encrypted blob not found at {file_path}")
+
+        async with aiofiles.open(file_path, mode="rb") as file_handle:
+            async for chunk in self._decrypt_stream(file_handle):
+                yield chunk
+
     async def write(
         self,
         path: str,

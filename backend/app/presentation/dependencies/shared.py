@@ -13,6 +13,10 @@ from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.disk_router import DiskRouter
 from app.infrastructure.storage.plain_adapter import PlainStorageAdapter
+from app.presentation.dependencies.archive_providers import (
+    get_archive_disk_router,
+    get_archive_manager,
+)
 from app.presentation.dependencies.auth import get_quota_repository
 from app.presentation.dependencies.files import get_file_repository
 from app.presentation.middleware.check_role import check_role
@@ -58,4 +62,11 @@ async def get_shared_file_service(
         ) from exc
 
     logger.info("Shared FileService initialized on disk {} at {}", disk_id, base_path)
-    return FileService(adapter, quota_repo, file_repo, section=FileSection.SHARED)
+    return FileService(
+        adapter,
+        quota_repo,
+        file_repo,
+        section=FileSection.SHARED,
+        archive_manager=get_archive_manager(),
+        disk_router=get_archive_disk_router(),
+    )

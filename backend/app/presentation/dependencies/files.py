@@ -15,6 +15,10 @@ from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.disk_router import DiskRouter
 from app.infrastructure.storage.plain_adapter import PlainStorageAdapter
+from app.presentation.dependencies.archive_providers import (
+    get_archive_disk_router,
+    get_archive_manager,
+)
 from app.presentation.dependencies.auth import get_current_user, get_quota_repository
 from config import get_settings
 
@@ -70,4 +74,10 @@ async def get_file_service(
         disk_id,
         base_path,
     )
-    return FileService(adapter, quota_repo, file_repo)
+    return FileService(
+        adapter,
+        quota_repo,
+        file_repo,
+        archive_manager=get_archive_manager(),
+        disk_router=get_archive_disk_router(),
+    )

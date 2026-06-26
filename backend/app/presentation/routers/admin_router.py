@@ -5,6 +5,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.admin_service import AdminService, DiskStat, UserAdminView
+from app.application.archive_service import ArchiveService
 from app.domain.entities.user import User
 from app.domain.exceptions import SelfRoleChangeError, SelfUserDeletionError, UserNotFoundError
 from app.domain.value_objects.error_codes import ErrorCode
@@ -12,8 +13,11 @@ from app.domain.value_objects.role import Role
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.disk_router import DiskRouter
 from app.presentation.dependencies.admin import get_admin_service, get_disk_router
+from app.presentation.dependencies.archive import get_archive_service
 from app.presentation.middleware.check_role import check_role
 from app.presentation.schemas.admin import (
+    ArchiveReportResponse,
+    ArchiveStatsResponse,
     DiskStatResponse,
     StorageHealthResponse,
     StorageStatsResponse,
@@ -189,3 +193,30 @@ async def get_storage_health(
     health = disk_router.health_check()
     logger.info("Admin storage health check completed")
     return StorageHealthResponse(disks=health)
+
+
+@router.get("/archive/run", response_model=ArchiveReportResponse)
+async def run_archive(
+    _admin: User = Depends(check_role(Role.ADMIN)),
+    archive_service: ArchiveService = Depends(get_archive_service),
+    session: AsyncSession = Depends(get_async_session),
+) -> ArchiveReportResponse:
+    report = await archive_service.run_daily_archive()
+    await session.commit()
+    logger.info(
+        "Manual archive run completed: processed={}, skipped={}, errors={}",
+        report.processed,
+        report.skipped,
+        report.errors,
+    )
+    return ArchiveReportResponse.from_report(report)
+
+
+@router.get("/archive/stats", response_model=ArchiveStatsResponse)
+async def get_archive_stats(
+    _admin: User = Depends(check_role(Role.ADMIN)),
+    archive_service: ArchiveService = Depends(get_archive_service),
+) -> ArchiveStatsResponse:
+    stats = await archive_service.get_stats()
+    logger.info("Admin archive stats requested")
+    return ArchiveStatsResponse.from_stats(stats)

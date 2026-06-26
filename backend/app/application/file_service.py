@@ -1,3 +1,4 @@
+import asyncio
 import mimetypes
 from collections.abc import AsyncIterator
 from pathlib import Path, PurePosixPath
@@ -5,12 +6,20 @@ from uuid import UUID
 
 from loguru import logger
 
+from app.application.archived_file_reader import (
+    resolve_archived_file_path,
+    stream_decompressed_archived,
+)
+from app.application.archive_service import ARCHIVE_EXTENSION
 from app.domain.entities.file_record import FileRecord, FileSection, FileStatus
 from app.domain.exceptions import AccessDeniedError, FileNotFoundError
 from app.domain.value_objects.role import Role
+from app.infrastructure.archive_manager import ArchiveManager
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
+from app.infrastructure.disk_router import DiskRouter
 from app.infrastructure.storage.base_adapter import FileNode, StorageAdapter
+from app.infrastructure.storage.encrypted_adapter import EncryptedStorageAdapter
 
 DEFAULT_MIME_TYPE = "application/octet-stream"
 TMP_DIR = ".tmp"
@@ -23,16 +32,21 @@ class FileService:
         quota_repo: QuotaRepository,
         file_repo: FileRepository,
         section: FileSection = FileSection.FILES,
+        archive_manager: ArchiveManager | None = None,
+        disk_router: DiskRouter | None = None,
     ) -> None:
         self._adapter = adapter
         self._quota_repo = quota_repo
         self._file_repo = file_repo
         self._section = section
+        self._archive_manager = archive_manager
+        self._disk_router = disk_router
 
     async def list_directory(self, user_id: UUID, path: str) -> list[FileNode]:
         normalized = self._normalize_path(path)
         logger.info("Listing directory for user {} at path {}", user_id, path)
         nodes = await self._adapter.list(normalized)
+        nodes = await self._merge_archived_nodes(user_id, normalized, nodes)
 
         if self._section != FileSection.SHARED:
             return nodes
@@ -144,12 +158,18 @@ class FileService:
             raise
 
     async def download_file(self, actor_id: UUID, file_id: UUID) -> AsyncIterator[bytes]:
-        record = await self._get_committed_record(file_id, actor_id)
-        section_path = self._to_section_path(record)
+        record = await self._get_downloadable_record(file_id, actor_id)
         logger.info("Downloading file {} for user {}", file_id, actor_id)
 
-        async for chunk in self._adapter.read(section_path):
-            yield chunk
+        if record.is_archived:
+            async for chunk in self._stream_archived(record):
+                yield chunk
+        else:
+            section_path = self._to_section_path(record)
+            async for chunk in self._adapter.read(section_path):
+                yield chunk
+
+        await self._file_repo.touch_last_accessed(file_id)
 
     async def delete_file(
         self,
@@ -158,12 +178,15 @@ class FileService:
         *,
         actor_role: Role | None = None,
     ) -> None:
-        record = await self._get_committed_record(file_id, actor_id)
+        record = await self._get_downloadable_record(file_id, actor_id)
         self._ensure_can_delete_record(record, actor_id, actor_role)
-        section_path = self._to_section_path(record)
 
-        if await self._adapter.exists(section_path):
-            await self._adapter.delete(section_path)
+        if record.is_archived:
+            await self._delete_archived_file(record)
+        else:
+            section_path = self._to_section_path(record)
+            if await self._adapter.exists(section_path):
+                await self._adapter.delete(section_path)
 
         await self._file_repo.delete(file_id)
         await self._quota_repo.decrement(record.user_id, record.size_bytes, record.section)
@@ -175,7 +198,9 @@ class FileService:
         await self._adapter.mkdir(dir_path)
 
     async def rename(self, actor_id: UUID, file_id: UUID, new_name: str) -> FileRecord:
-        record = await self._get_committed_record(file_id, actor_id)
+        record = await self._get_downloadable_record(file_id, actor_id)
+        if record.is_archived:
+            raise FileNotFoundError(f"Cannot rename archived file {file_id}")
         old_section_path = self._to_section_path(record)
         parent = str(PurePosixPath(old_section_path).parent)
         new_section_path = (
@@ -195,11 +220,31 @@ class FileService:
         logger.info("Renamed file {} to {} for user {}", file_id, new_name, actor_id)
         return updated
 
-    async def read_by_path(self, path: str) -> AsyncIterator[bytes]:
+    async def read_by_path(self, actor_id: UUID, path: str) -> AsyncIterator[bytes]:
         normalized = self._normalize_path(path)
+        record = await self._get_record_by_section_path(actor_id, normalized, self._section)
+
+        if record is None and normalized.endswith(ARCHIVE_EXTENSION):
+            logical_path = normalized[: -len(ARCHIVE_EXTENSION)]
+            record = await self._get_record_by_section_path(
+                actor_id,
+                logical_path,
+                self._section,
+            )
+
+        if record is not None and record.is_archived:
+            logger.info("Reading archived file {} at path {}", record.id, normalized)
+            async for chunk in self._stream_archived(record):
+                yield chunk
+            await self._file_repo.touch_last_accessed(record.id)
+            return
+
         logger.info("Reading file at path {}", normalized)
         async for chunk in self._adapter.read(normalized):
             yield chunk
+
+        if record is not None:
+            await self._file_repo.touch_last_accessed(record.id)
 
     async def delete_by_path(
         self,
@@ -209,6 +254,15 @@ class FileService:
         actor_role: Role | None = None,
     ) -> None:
         normalized = self._normalize_path(path)
+        record = await self._get_record_by_section_path(
+            actor_id,
+            normalized,
+            self._section,
+        )
+        if record is not None:
+            await self.delete_file(actor_id, record.id, actor_role=actor_role)
+            return
+
         if not await self._adapter.exists(normalized):
             raise FileNotFoundError(f"Path {path!r} not found")
 
@@ -218,21 +272,66 @@ class FileService:
             await self._adapter.delete(normalized)
             return
 
-        record = await self._get_record_by_section_path(
-            actor_id,
+        logger.warning(
+            "Deleting untracked file at path {} for user {}",
             normalized,
-            self._section,
+            actor_id,
         )
-        if record is None:
-            logger.warning(
-                "Deleting untracked file at path {} for user {}",
-                normalized,
-                actor_id,
-            )
-            await self._adapter.delete(normalized)
-            return
+        await self._adapter.delete(normalized)
 
-        await self.delete_file(actor_id, record.id, actor_role=actor_role)
+    async def _merge_archived_nodes(
+        self,
+        user_id: UUID,
+        normalized_path: str,
+        nodes: list[FileNode],
+    ) -> list[FileNode]:
+        parent_disk_path = self._adapter.to_disk_relative_path(normalized_path)
+
+        if self._section == FileSection.SHARED:
+            archived_records = await self._file_repo.list_archived_direct_children(
+                self._section,
+                parent_disk_path,
+            )
+        else:
+            archived_records = await self._file_repo.list_archived_direct_children(
+                self._section,
+                parent_disk_path,
+                user_id=user_id,
+            )
+
+        archive_blob_names = {
+            self._archive_blob_name(record) for record in archived_records
+        }
+        filtered = [
+            node
+            for node in nodes
+            if not (not node.is_dir and node.name in archive_blob_names)
+        ]
+
+        for record in archived_records:
+            filtered.append(
+                FileNode(
+                    name=record.original_name,
+                    is_dir=False,
+                    size=record.size_bytes,
+                    modified_at=record.last_accessed_at,
+                )
+            )
+
+        if archived_records:
+            logger.info(
+                "Merged {} archived file records into listing at path {}",
+                len(archived_records),
+                normalized_path or "/",
+            )
+
+        return filtered
+
+    @staticmethod
+    def _archive_blob_name(record: FileRecord) -> str:
+        if record.archive_path:
+            return PurePosixPath(record.archive_path).name
+        return f"{PurePosixPath(record.relative_path).name}{ARCHIVE_EXTENSION}"
 
     async def _get_record_by_section_path(
         self,
@@ -242,7 +341,7 @@ class FileService:
     ) -> FileRecord | None:
         disk_relative_path = self._adapter.to_disk_relative_path(section_path)
         if section == FileSection.SHARED:
-            record = await self._file_repo.get_committed_by_relative_path_in_section(
+            record = await self._file_repo.get_downloadable_by_relative_path_in_section(
                 disk_relative_path,
                 section,
             )
@@ -256,7 +355,7 @@ class FileService:
                 filename,
             )
 
-        record = await self._file_repo.get_committed_by_relative_path(
+        record = await self._file_repo.get_downloadable_by_relative_path(
             user_id,
             disk_relative_path,
             section,
@@ -344,13 +443,41 @@ class FileService:
         if record.user_id != actor_id:
             raise AccessDeniedError(f"User {actor_id} cannot delete file {record.id}")
 
-    async def _get_committed_record(self, file_id: UUID, actor_id: UUID) -> FileRecord:
+    async def _get_downloadable_record(self, file_id: UUID, actor_id: UUID) -> FileRecord:
         record = await self._file_repo.get_by_id(file_id)
-        if record is None or record.status != FileStatus.COMMITTED:
+        if record is None or record.status not in (FileStatus.COMMITTED, FileStatus.ARCHIVED):
             raise FileNotFoundError(f"File {file_id} not found")
         if self._section != FileSection.SHARED and record.user_id != actor_id:
             raise AccessDeniedError(f"User {actor_id} cannot access file {file_id}")
         return record
+
+    async def _get_committed_record(self, file_id: UUID, actor_id: UUID) -> FileRecord:
+        record = await self._get_downloadable_record(file_id, actor_id)
+        if record.status != FileStatus.COMMITTED:
+            raise FileNotFoundError(f"File {file_id} not found")
+        return record
+
+    async def _stream_archived(self, record: FileRecord) -> AsyncIterator[bytes]:
+        if self._archive_manager is None or self._disk_router is None:
+            raise FileNotFoundError(f"Archived file {record.id} cannot be read")
+
+        encrypted_adapter = self._adapter if isinstance(self._adapter, EncryptedStorageAdapter) else None
+        async for chunk in stream_decompressed_archived(
+            record,
+            self._archive_manager,
+            self._disk_router,
+            encrypted_adapter=encrypted_adapter,
+        ):
+            yield chunk
+
+    async def _delete_archived_file(self, record: FileRecord) -> None:
+        if self._disk_router is None:
+            raise FileNotFoundError(f"Archived file {record.id} cannot be deleted")
+
+        archive_path = resolve_archived_file_path(record, self._disk_router)
+        if archive_path.is_file():
+            await asyncio.to_thread(archive_path.unlink)
+            logger.info("Deleted archived file at {}", archive_path)
 
     def _to_section_path(self, record: FileRecord) -> str:
         prefix = f"{self._adapter.disk_relative_prefix}/"

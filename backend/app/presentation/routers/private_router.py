@@ -372,7 +372,7 @@ async def download_private_file(
     logger.info("Private download requested for user {} path {}", current_user.id, path)
 
     try:
-        stream = file_service.read_by_path(normalized)
+        stream = file_service.read_by_path(current_user.id, normalized)
     except Exception as exc:
         _raise_http_for_domain_error(exc)
 

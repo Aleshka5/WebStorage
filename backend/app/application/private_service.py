@@ -23,6 +23,10 @@ from app.infrastructure.storage.encrypted_adapter import (
     EncryptedStorageAdapter,
 )
 from app.infrastructure.storage.plain_adapter import PlainStorageAdapter
+from app.presentation.dependencies.archive_providers import (
+    get_archive_disk_router,
+    get_archive_manager,
+)
 from config import Settings, get_settings
 
 _KEY_ENCODING = "ascii"
@@ -133,6 +137,8 @@ class PrivateService:
             self._quota_repo,
             self._file_repo,
             section=FileSection.PRIVATE,
+            archive_manager=get_archive_manager(),
+            disk_router=get_archive_disk_router(),
         )
 
     async def get_quota(self, user_id: UUID) -> dict[str, int]:

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from loguru import logger
@@ -102,6 +103,76 @@ class FileRepository:
         if model is None:
             return None
         return self._to_entity(model)
+
+    async def get_downloadable_by_relative_path(
+        self,
+        user_id: UUID,
+        relative_path: str,
+        section: FileSection,
+    ) -> FileRecordEntity | None:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.user_id == user_id,
+                FileRecordModel.relative_path == relative_path,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status.in_(
+                    (FileStatusModel.COMMITTED, FileStatusModel.ARCHIVED),
+                ),
+            )
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    async def get_downloadable_by_relative_path_in_section(
+        self,
+        relative_path: str,
+        section: FileSection,
+    ) -> FileRecordEntity | None:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.relative_path == relative_path,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status.in_(
+                    (FileStatusModel.COMMITTED, FileStatusModel.ARCHIVED),
+                ),
+            )
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    async def list_archived_direct_children(
+        self,
+        section: FileSection,
+        parent_disk_relative_path: str,
+        *,
+        user_id: UUID | None = None,
+    ) -> list[FileRecordEntity]:
+        stmt = select(FileRecordModel).where(
+            FileRecordModel.section == FileSectionModel(section.value),
+            FileRecordModel.status == FileStatusModel.ARCHIVED,
+            FileRecordModel.is_archived.is_(True),
+        )
+        if user_id is not None:
+            stmt = stmt.where(FileRecordModel.user_id == user_id)
+
+        result = await self._session.execute(stmt)
+        parent = parent_disk_relative_path.rstrip("/")
+        records = [
+            self._to_entity(model)
+            for model in result.scalars().all()
+            if self._is_direct_child(model.relative_path, parent)
+        ]
+        logger.info(
+            "Listed {} archived file records in section {} under {}",
+            len(records),
+            section.value,
+            parent_disk_relative_path,
+        )
+        return records
 
     async def get_uploaders_by_relative_paths_in_section(
         self,
@@ -384,6 +455,62 @@ class FileRepository:
         )
         return len(models)
 
+    async def list_candidates_for_archive(
+        self,
+        cutoff: datetime,
+    ) -> list[FileRecordEntity]:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.last_accessed_at < cutoff,
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+                FileRecordModel.is_archived.is_(False),
+            )
+        )
+        records = [self._to_entity(model) for model in result.scalars().all()]
+        logger.info(
+            "Found {} file records eligible for archive (cutoff={})",
+            len(records),
+            cutoff.isoformat(),
+        )
+        return records
+
+    async def list_archived_records(self) -> list[FileRecordEntity]:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.is_archived.is_(True),
+                FileRecordModel.status == FileStatusModel.ARCHIVED,
+            )
+        )
+        return [self._to_entity(model) for model in result.scalars().all()]
+
+    async def mark_archived(
+        self,
+        file_id: UUID,
+        archive_path: str,
+    ) -> FileRecordEntity | None:
+        model = await self._session.get(FileRecordModel, file_id)
+        if model is None:
+            logger.warning("File record {} not found for archive update", file_id)
+            return None
+
+        model.is_archived = True
+        model.status = FileStatusModel.ARCHIVED
+        model.archive_path = archive_path
+        await self._session.flush()
+        await self._session.refresh(model)
+        logger.info("Marked file record {} as archived at {}", file_id, archive_path)
+        return self._to_entity(model)
+
+    async def touch_last_accessed(self, file_id: UUID) -> None:
+        model = await self._session.get(FileRecordModel, file_id)
+        if model is None:
+            logger.warning("File record {} not found for last_accessed update", file_id)
+            return
+
+        model.last_accessed_at = datetime.now(tz=UTC)
+        await self._session.flush()
+        logger.info("Updated last_accessed_at for file record {}", file_id)
+
     async def delete(self, file_id: UUID) -> FileRecordEntity | None:
         model = await self._session.get(FileRecordModel, file_id)
         if model is None:
@@ -395,6 +522,15 @@ class FileRepository:
         await self._session.refresh(model)
         logger.info("Marked file record {} as deleted", file_id)
         return self._to_entity(model)
+
+    @staticmethod
+    def _is_direct_child(relative_path: str, parent_prefix: str) -> bool:
+        parent = parent_prefix.rstrip("/")
+        child_prefix = f"{parent}/"
+        if not relative_path.startswith(child_prefix):
+            return False
+        suffix = relative_path[len(child_prefix) :]
+        return bool(suffix) and "/" not in suffix
 
     @staticmethod
     def _to_entity(model: FileRecordModel) -> FileRecordEntity:

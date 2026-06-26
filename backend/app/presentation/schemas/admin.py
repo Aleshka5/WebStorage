@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.application.admin_service import DiskStat, UserAdminView
+from app.application.archive_service import ArchiveReport, ArchiveStats
 from app.domain.entities.user import User
 from app.domain.value_objects.role import Role
 
@@ -79,3 +80,35 @@ class StorageStatsResponse(BaseModel):
 
 class StorageHealthResponse(BaseModel):
     disks: dict[str, str]
+
+
+class ArchiveReportResponse(BaseModel):
+    processed: int = Field(ge=0)
+    skipped: int = Field(ge=0)
+    errors: int = Field(ge=0)
+
+    @classmethod
+    def from_report(cls, report: ArchiveReport) -> "ArchiveReportResponse":
+        return cls(
+            processed=report.processed,
+            skipped=report.skipped,
+            errors=report.errors,
+        )
+
+
+class ArchiveStatsResponse(BaseModel):
+    last_run: datetime | None
+    processed: int = Field(ge=0)
+    skipped: int = Field(ge=0)
+    errors: int = Field(ge=0)
+    total_archived_bytes: int = Field(ge=0)
+
+    @classmethod
+    def from_stats(cls, stats: ArchiveStats) -> "ArchiveStatsResponse":
+        return cls(
+            last_run=stats.last_run,
+            processed=stats.processed,
+            skipped=stats.skipped,
+            errors=stats.errors,
+            total_archived_bytes=stats.total_archived_bytes,
+        )

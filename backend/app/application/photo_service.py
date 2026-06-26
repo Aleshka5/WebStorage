@@ -9,8 +9,13 @@ from uuid import UUID
 import aiofiles
 from loguru import logger
 
+from app.application.archived_file_reader import (
+    resolve_archived_file_path,
+    stream_decompressed_archived,
+)
 from app.domain.entities.file_record import FileRecord, FileSection, FileStatus
 from app.domain.exceptions import AccessDeniedError, FileNotFoundError, UnsupportedFormatError
+from app.infrastructure.archive_manager import ArchiveManager
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.disk_router import DiskRouter
@@ -48,12 +53,14 @@ class PhotoService:
         file_repo: FileRepository,
         quota_repo: QuotaRepository,
         disk_router: DiskRouter,
+        archive_manager: ArchiveManager | None = None,
     ) -> None:
         self._adapter = adapter
         self._thumbnail_service = thumbnail_service
         self._file_repo = file_repo
         self._quota_repo = quota_repo
         self._disk_router = disk_router
+        self._archive_manager = archive_manager
         self._thumbnail_max_px = get_settings().business_logic.thumbnail_max_px
 
     async def upload_photo(
@@ -155,13 +162,22 @@ class PhotoService:
         return PhotosPage(items=items, total=total, has_next=has_next)
 
     async def get_preview(self, user_id: UUID, file_id: UUID) -> tuple[bytes, str]:
-        record = await self._get_committed_record(user_id, file_id)
+        record = await self._get_downloadable_record(user_id, file_id)
         preview_path = self._preview_path(file_id)
 
         if await self._adapter.exists(preview_path):
             logger.info("Serving preview for photo {} user {}", file_id, user_id)
             content = await self._read_bytes(preview_path)
             return content, "image/jpeg"
+
+        if record.is_archived:
+            logger.warning(
+                "Preview missing for archived photo {}, serving decompressed original for user {}",
+                file_id,
+                user_id,
+            )
+            content = await self._read_archived_bytes(record)
+            return content, record.mime_type
 
         original_path = self._to_section_path(record)
         logger.warning(
@@ -173,30 +189,41 @@ class PhotoService:
         return content, record.mime_type
 
     async def get_original(self, user_id: UUID, file_id: UUID) -> AsyncIterator[bytes]:
-        record = await self._get_committed_record(user_id, file_id)
-        section_path = self._to_section_path(record)
+        record = await self._get_downloadable_record(user_id, file_id)
         logger.info("Streaming original for photo {} user {}", file_id, user_id)
 
-        async for chunk in self._adapter.read(section_path):
-            yield chunk
+        if record.is_archived:
+            async for chunk in self._stream_archived(record):
+                yield chunk
+        else:
+            section_path = self._to_section_path(record)
+            async for chunk in self._adapter.read(section_path):
+                yield chunk
+
+        await self._file_repo.touch_last_accessed(file_id)
 
     async def stream_original(
         self,
         user_id: UUID,
         file_id: UUID,
     ) -> tuple[str, str, AsyncIterator[bytes]]:
-        record = await self._get_committed_record(user_id, file_id)
-        section_path = self._to_section_path(record)
+        record = await self._get_downloadable_record(user_id, file_id)
         logger.info("Opening original stream for photo {} user {}", file_id, user_id)
-        return record.mime_type, record.original_name, self._adapter.read(section_path)
+        return record.mime_type, record.original_name, self.get_original(user_id, file_id)
 
     async def delete_photo(self, user_id: UUID, file_id: UUID) -> None:
-        record = await self._get_committed_record(user_id, file_id)
-        original_path = self._to_section_path(record)
+        record = await self._get_downloadable_record(user_id, file_id)
         preview_path = self._preview_path(file_id)
 
-        if await self._adapter.exists(original_path):
-            await self._adapter.delete(original_path)
+        if record.is_archived:
+            archive_path = resolve_archived_file_path(record, self._disk_router)
+            if archive_path.is_file():
+                await asyncio.to_thread(archive_path.unlink)
+        else:
+            original_path = self._to_section_path(record)
+            if await self._adapter.exists(original_path):
+                await self._adapter.delete(original_path)
+
         if await self._adapter.exists(preview_path):
             await self._adapter.delete(preview_path)
 
@@ -222,15 +249,38 @@ class PhotoService:
                 source_section_path,
             )
 
-    async def _get_committed_record(self, user_id: UUID, file_id: UUID) -> FileRecord:
+    async def _get_downloadable_record(self, user_id: UUID, file_id: UUID) -> FileRecord:
         record = await self._file_repo.get_by_id(file_id)
-        if record is None or record.status != FileStatus.COMMITTED:
+        if record is None or record.status not in (FileStatus.COMMITTED, FileStatus.ARCHIVED):
             raise FileNotFoundError(f"Photo {file_id} not found")
         if record.user_id != user_id:
             raise AccessDeniedError(f"User {user_id} cannot access photo {file_id}")
         if record.section != FileSection.PHOTOS:
             raise FileNotFoundError(f"Photo {file_id} not found")
         return record
+
+    async def _get_committed_record(self, user_id: UUID, file_id: UUID) -> FileRecord:
+        record = await self._get_downloadable_record(user_id, file_id)
+        if record.status != FileStatus.COMMITTED:
+            raise FileNotFoundError(f"Photo {file_id} not found")
+        return record
+
+    async def _stream_archived(self, record: FileRecord) -> AsyncIterator[bytes]:
+        if self._archive_manager is None:
+            raise FileNotFoundError(f"Archived photo {record.id} cannot be read")
+
+        async for chunk in stream_decompressed_archived(
+            record,
+            self._archive_manager,
+            self._disk_router,
+        ):
+            yield chunk
+
+    async def _read_archived_bytes(self, record: FileRecord) -> bytes:
+        chunks: list[bytes] = []
+        async for chunk in self._stream_archived(record):
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     async def _read_bytes(self, section_path: str) -> bytes:
         target = self._adapter.base_path / section_path
