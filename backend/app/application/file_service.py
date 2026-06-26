@@ -21,10 +21,12 @@ class FileService:
         adapter: StorageAdapter,
         quota_repo: QuotaRepository,
         file_repo: FileRepository,
+        section: FileSection = FileSection.FILES,
     ) -> None:
         self._adapter = adapter
         self._quota_repo = quota_repo
         self._file_repo = file_repo
+        self._section = section
 
     async def list_directory(self, user_id: UUID, path: str) -> list[FileNode]:
         logger.info("Listing directory for user {} at path {}", user_id, path)
@@ -149,11 +151,11 @@ class FileService:
 
     async def delete_by_path(self, user_id: UUID, path: str) -> None:
         normalized = self._normalize_path(path)
-        target = self._adapter._safe_path(self._adapter.base_path, normalized)  # noqa: SLF001
-        if not target.exists():
+        if not await self._adapter.exists(normalized):
             raise FileNotFoundError(f"Path {path!r} not found")
 
-        if target.is_dir():
+        is_dir = await self._is_directory(normalized)
+        if is_dir:
             logger.info("Deleting directory {} for user {}", normalized, user_id)
             await self._adapter.delete(normalized)
             return
@@ -162,7 +164,7 @@ class FileService:
         record = await self._get_record_by_section_path(
             user_id,
             normalized,
-            FileSection.FILES,
+            self._section,
         )
         if record is None:
             logger.warning(
@@ -205,15 +207,14 @@ class FileService:
         new_name: str,
     ) -> FileRecord | None:
         normalized = self._normalize_path(path)
-        target = self._adapter._safe_path(self._adapter.base_path, normalized)  # noqa: SLF001
-        if not target.exists():
+        if not await self._adapter.exists(normalized):
             raise FileNotFoundError(f"Path {path!r} not found")
 
         parent = str(PurePosixPath(normalized).parent)
         parent = "" if parent in (".", "") else parent
         new_path = new_name if not parent else f"{parent}/{new_name}"
 
-        if target.is_dir():
+        if await self._is_directory(normalized):
             old_disk_prefix = self._adapter.to_disk_relative_path(normalized)
             new_disk_prefix = self._adapter.to_disk_relative_path(new_path)
             logger.info(
@@ -225,7 +226,7 @@ class FileService:
             await self._adapter.rename(normalized, new_path)
             await self._file_repo.update_relative_path_prefix(
                 user_id,
-                FileSection.FILES,
+                self._section,
                 old_disk_prefix,
                 new_disk_prefix,
             )
@@ -234,12 +235,19 @@ class FileService:
         record = await self._get_record_by_section_path(
             user_id,
             normalized,
-            FileSection.FILES,
+            self._section,
         )
         if record is None:
             raise FileNotFoundError(f"File record for path {path!r} not found")
 
         return await self.rename(user_id, record.id, new_name)
+
+    async def _is_directory(self, path: str) -> bool:
+        try:
+            await self._adapter.list(path)
+        except FileNotFoundError:
+            return False
+        return True
 
     async def _get_committed_record(self, user_id: UUID, file_id: UUID) -> FileRecord:
         record = await self._file_repo.get_by_id(file_id)

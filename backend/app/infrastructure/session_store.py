@@ -10,6 +10,11 @@ _OAUTH_STATE_PREFIX = "oauth_state:"
 _OAUTH_TICKET_PREFIX = "oauth_ticket:"
 _OAUTH_STATE_TTL_SECONDS = 600
 _OAUTH_TICKET_TTL_SECONDS = 120
+_UNLOCK_ATTEMPTS_PREFIX = "unlock_attempts:"
+UNLOCK_RATE_LIMIT_MAX_ATTEMPTS = 5
+UNLOCK_RATE_LIMIT_TTL_SECONDS = 900
+_UNLOCK_MAX_ATTEMPTS = UNLOCK_RATE_LIMIT_MAX_ATTEMPTS
+_UNLOCK_TTL_SECONDS = UNLOCK_RATE_LIMIT_TTL_SECONDS
 
 
 class SessionStore:
@@ -33,6 +38,36 @@ class SessionStore:
         redis_key = f"{_PRIVATE_KEY_PREFIX}{session_id}"
         await self._redis.delete(redis_key)
         logger.info("Deleted private key for session {}", session_id)
+
+    async def get_private_key_ttl(self, session_id: str) -> int:
+        redis_key = f"{_PRIVATE_KEY_PREFIX}{session_id}"
+        ttl = await self._redis.ttl(redis_key)
+        if ttl < 0:
+            return 0
+        return ttl
+
+    async def increment_unlock_attempts(self, user_id: str, client_ip: str) -> int:
+        redis_key = f"{_UNLOCK_ATTEMPTS_PREFIX}{user_id}:{client_ip}"
+        count = await self._redis.incr(redis_key)
+        if count == 1:
+            await self._redis.expire(redis_key, _UNLOCK_TTL_SECONDS)
+        logger.warning(
+            "Unlock attempt {} for user {} from IP {}",
+            count,
+            user_id,
+            client_ip,
+        )
+        return count
+
+    async def reset_unlock_attempts(self, user_id: str, client_ip: str) -> None:
+        redis_key = f"{_UNLOCK_ATTEMPTS_PREFIX}{user_id}:{client_ip}"
+        await self._redis.delete(redis_key)
+        logger.info("Reset unlock attempts for user {} from IP {}", user_id, client_ip)
+
+    async def get_unlock_attempts(self, user_id: str, client_ip: str) -> int:
+        redis_key = f"{_UNLOCK_ATTEMPTS_PREFIX}{user_id}:{client_ip}"
+        value = await self._redis.get(redis_key)
+        return int(value) if value is not None else 0
 
     async def store_oauth_state(self, state: str) -> None:
         redis_key = f"{_OAUTH_STATE_PREFIX}{state}"

@@ -28,3 +28,7 @@ class AccessDeniedError(Exception):
 
 class UnsupportedFormatError(Exception):
     """Raised when an uploaded file format is not supported."""
+
+
+class PrivateSessionExpiredError(Exception):
+    """Raised when the private encryption session key is missing or expired."""
