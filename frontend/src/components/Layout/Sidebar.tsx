@@ -9,6 +9,7 @@ import {
   Settings,
   Users,
 } from "lucide-react";
+import { useAuthStore } from "../../store/auth";
 import { StorageUsageBar } from "./StorageUsageBar";
 
 const STORAGE_KEY = "homecloud-sidebar-expanded";
@@ -27,6 +28,18 @@ const MENU_ITEMS: MenuItem[] = [
   { to: "/admin", label: "Админка", icon: Settings },
 ];
 
+function isMenuItemVisible(to: string, role: string | undefined): boolean {
+  if (to === "/shared") {
+    return role === "FAMILY" || role === "ADMIN";
+  }
+
+  if (to === "/admin") {
+    return role === "ADMIN";
+  }
+
+  return true;
+}
+
 function readExpandedState(): boolean {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -38,6 +51,7 @@ function readExpandedState(): boolean {
 }
 
 export function Sidebar() {
+  const user = useAuthStore((state) => state.user);
   const [expanded, setExpanded] = useState(readExpandedState);
 
   useEffect(() => {
@@ -49,6 +63,7 @@ export function Sidebar() {
   }, [expanded]);
 
   const toggle = () => setExpanded((prev) => !prev);
+  const visibleItems = MENU_ITEMS.filter(({ to }) => isMenuItemVisible(to, user?.role));
 
   return (
     <aside
@@ -69,7 +84,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2">
-        {MENU_ITEMS.map(({ to, label, icon: Icon }) => (
+        {visibleItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}
