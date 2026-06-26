@@ -1,0 +1,20 @@
+[project]
+name = "webstorage"
+version = "0.1.0"
+description = "HomeCloud - self-hosted network storage"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "redis",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
+    "pillow",
+    "cryptography",
+    "zstandard",
+    "apscheduler",
+    "pydantic-settings",
+]

@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+redis
+python-jose[cryptography]
+passlib[bcrypt]
+pillow
+cryptography
+zstandard
+apscheduler
+pydantic-settings

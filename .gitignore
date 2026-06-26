@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node.js
+node_modules/
+dist/
+
+# HomeCloud storage (user data)
+storage/disk*/
+!storage/disk1/.gitkeep
