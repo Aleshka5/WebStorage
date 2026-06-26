@@ -224,3 +224,5 @@ dist/
 # HomeCloud storage (user data)
 storage/disk*/
 !storage/disk1/.gitkeep
+
+.upd/

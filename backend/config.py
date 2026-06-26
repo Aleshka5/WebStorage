@@ -51,6 +51,13 @@ class BusinessLogicSettings(BaseSettings):
     archive_days_threshold: int = Field(default=180, validation_alias="ARCHIVE_DAYS_THRESHOLD")
 
 
+class AdminSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    email: str = Field(default="", validation_alias="ADMIN_EMAIL")
+    password: str = Field(default="", validation_alias="ADMIN_PASSWORD")
+
+
 class Settings:
     def __init__(self) -> None:
         self.database = DatabaseSettings()
@@ -58,6 +65,7 @@ class Settings:
         self.storage = StorageSettings()
         self.auth = AuthSettings()
         self.business_logic = BusinessLogicSettings()
+        self.admin = AdminSettings()
 
 
 @lru_cache
