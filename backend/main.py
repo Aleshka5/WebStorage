@@ -20,6 +20,8 @@ from app.presentation.routers.file_router import router as file_router, shared_r
 from app.presentation.routers.photo_router import router as photo_router
 from app.presentation.routers.private_router import router as private_router
 from app.presentation.routers.quota_router import router as quota_router
+from app.presentation.exception_handlers import register_exception_handlers
+from app.presentation.middleware.rate_limit import AuthRateLimitMiddleware
 from config import get_settings
 
 
@@ -145,6 +147,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="HomeCloud", version="1.0", lifespan=lifespan)
+register_exception_handlers(app)
+app.add_middleware(AuthRateLimitMiddleware)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(quota_router)

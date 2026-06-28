@@ -10,6 +10,7 @@ _OAUTH_STATE_PREFIX = "oauth_state:"
 _OAUTH_TICKET_PREFIX = "oauth_ticket:"
 _OAUTH_STATE_TTL_SECONDS = 600
 _OAUTH_TICKET_TTL_SECONDS = 120
+_AUTH_RATE_LIMIT_PREFIX = "auth_rate:"
 _UNLOCK_ATTEMPTS_PREFIX = "unlock_attempts:"
 UNLOCK_RATE_LIMIT_MAX_ATTEMPTS = 5
 UNLOCK_RATE_LIMIT_TTL_SECONDS = 900
@@ -68,6 +69,27 @@ class SessionStore:
         redis_key = f"{_UNLOCK_ATTEMPTS_PREFIX}{user_id}:{client_ip}"
         value = await self._redis.get(redis_key)
         return int(value) if value is not None else 0
+
+    async def increment_auth_requests(
+        self,
+        endpoint: str,
+        client_ip: str,
+        window_seconds: int,
+    ) -> tuple[int, int]:
+        redis_key = f"{_AUTH_RATE_LIMIT_PREFIX}{endpoint}:{client_ip}"
+        count = await self._redis.incr(redis_key)
+        if count == 1:
+            await self._redis.expire(redis_key, window_seconds)
+        ttl = await self._redis.ttl(redis_key)
+        retry_after = ttl if ttl > 0 else window_seconds
+        logger.info(
+            "Auth request {} for endpoint {} from IP {} (window {}s)",
+            count,
+            endpoint,
+            client_ip,
+            window_seconds,
+        )
+        return count, retry_after
 
     async def store_oauth_state(self, state: str) -> None:
         redis_key = f"{_OAUTH_STATE_PREFIX}{state}"

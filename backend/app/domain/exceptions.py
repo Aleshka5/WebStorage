@@ -17,6 +17,10 @@ class PathTraversalError(Exception):
 class QuotaExceededError(Exception):
     """Raised when a storage operation would exceed the user's quota."""
 
+    def __init__(self, message: str, *, available_bytes: int | None = None) -> None:
+        super().__init__(message)
+        self.available_bytes = available_bytes
+
 
 class FileNotFoundError(Exception):
     """Raised when a requested file or directory does not exist."""

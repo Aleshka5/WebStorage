@@ -3,6 +3,7 @@ import { isAxiosError } from "axios";
 import { Lock } from "lucide-react";
 import { resetPrivateStorage, unlockPrivate } from "../services/privateApi";
 import { getApiErrorDetail } from "../services/api";
+import { getErrorMessage } from "./ui/ErrorMessage";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 
@@ -13,8 +14,7 @@ interface PrivateUnlockModalProps {
 }
 
 function formatRateLimitMessage(retryAfterSeconds: number): string {
-  const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
-  return `Слишком много попыток. Подождите ${minutes} минут`;
+  return getErrorMessage("TOO_MANY_ATTEMPTS", { retry_after: retryAfterSeconds });
 }
 
 export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnlockModalProps) {
@@ -79,7 +79,10 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
         setIsRateLimited(true);
       } else {
         const detail = getApiErrorDetail(err);
-        setError(detail?.message ?? "Не удалось разблокировать раздел");
+        setError(getErrorMessage(detail?.error_code, {
+          available_bytes: detail?.available_bytes,
+          retry_after: detail?.retry_after,
+        }, detail?.message ?? "Не удалось разблокировать раздел"));
       }
     } finally {
       setIsSubmitting(false);

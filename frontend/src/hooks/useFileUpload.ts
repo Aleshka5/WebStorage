@@ -1,6 +1,13 @@
 import { useCallback, useState } from "react";
 import { getApiErrorDetail } from "../services/api";
 import { uploadFile } from "../services/filesApi";
+import {
+  dismissToast,
+  LARGE_UPLOAD_THRESHOLD_BYTES,
+  showErrorToast,
+  showSuccessToast,
+  showUploadProgressToast,
+} from "../utils/toast";
 import { generateId } from "../utils/id";
 
 export type UploadStatus = "uploading" | "done" | "error";
@@ -34,6 +41,12 @@ export function useFileUpload(apiPrefix: string) {
       await Promise.all(
         files.map(async (file, index) => {
           const uploadId = pendingUploads[index].id;
+          const progressToastId = `upload-${uploadId}`;
+          const showProgressToast = file.size > LARGE_UPLOAD_THRESHOLD_BYTES;
+
+          if (showProgressToast) {
+            showUploadProgressToast(progressToastId, file.name, 0);
+          }
 
           try {
             await uploadFile(apiPrefix, path, file, (progress) => {
@@ -42,7 +55,15 @@ export function useFileUpload(apiPrefix: string) {
                   item.id === uploadId ? { ...item, progress } : item,
                 ),
               );
+
+              if (showProgressToast) {
+                showUploadProgressToast(progressToastId, file.name, progress);
+              }
             });
+
+            if (showProgressToast) {
+              dismissToast(progressToastId);
+            }
 
             setUploads((current) =>
               current.map((item) =>
@@ -51,7 +72,12 @@ export function useFileUpload(apiPrefix: string) {
                   : item,
               ),
             );
+            showSuccessToast("Файл загружен");
           } catch (error) {
+            if (showProgressToast) {
+              dismissToast(progressToastId);
+            }
+
             const detail = getApiErrorDetail(error);
 
             setUploads((current) =>
@@ -65,6 +91,7 @@ export function useFileUpload(apiPrefix: string) {
                   : item,
               ),
             );
+            showErrorToast(error);
           }
         }),
       );

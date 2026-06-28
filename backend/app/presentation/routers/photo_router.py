@@ -16,7 +16,7 @@ from app.infrastructure.database.session import get_async_session
 from app.infrastructure.storage.base_adapter import READ_CHUNK_SIZE
 from app.presentation.dependencies.auth import get_current_user, get_quota_repository
 from app.presentation.dependencies.photos import get_photo_service
-from app.presentation.routers.file_router import _ensure_upload_quota, _raise_http_for_domain_error
+from app.presentation.routers.file_router import _ensure_upload_quota
 from app.presentation.schemas.photos import PhotoItemResponse, PhotoListResponse
 from app.presentation.utils.content_disposition import build_attachment_content_disposition
 from config import get_settings
@@ -51,7 +51,7 @@ def _raise_http_for_photo_error(exc: Exception) -> None:
                 "message": str(exc),
             },
         ) from exc
-    _raise_http_for_domain_error(exc)
+    raise
 
 
 async def _iter_upload_chunks(upload_file: UploadFile) -> AsyncIterator[bytes]:

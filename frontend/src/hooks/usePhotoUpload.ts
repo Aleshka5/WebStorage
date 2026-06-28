@@ -2,6 +2,13 @@ import { useCallback, useState } from "react";
 import { getApiErrorDetail } from "../services/api";
 import { uploadPhoto } from "../services/photosApi";
 import type { PhotoItem } from "../types/photos";
+import {
+  dismissToast,
+  LARGE_UPLOAD_THRESHOLD_BYTES,
+  showErrorToast,
+  showSuccessToast,
+  showUploadProgressToast,
+} from "../utils/toast";
 import { normalizePhotoFiles } from "../utils/photoUpload";
 import { generateId } from "../utils/id";
 
@@ -46,6 +53,12 @@ export function usePhotoUpload() {
       await Promise.all(
         normalizedFiles.map(async (file, index) => {
           const uploadId = pendingUploads[index].id;
+          const progressToastId = `photo-upload-${uploadId}`;
+          const showProgressToast = file.size > LARGE_UPLOAD_THRESHOLD_BYTES;
+
+          if (showProgressToast) {
+            showUploadProgressToast(progressToastId, file.name, 0);
+          }
 
           try {
             const photo = await uploadPhoto(file, (progress) => {
@@ -54,7 +67,15 @@ export function usePhotoUpload() {
                   item.id === uploadId ? { ...item, progress } : item,
                 ),
               );
+
+              if (showProgressToast) {
+                showUploadProgressToast(progressToastId, file.name, progress);
+              }
             });
+
+            if (showProgressToast) {
+              dismissToast(progressToastId);
+            }
 
             setUploads((current) =>
               current.map((item) =>
@@ -64,8 +85,13 @@ export function usePhotoUpload() {
               ),
             );
 
+            showSuccessToast("Файл загружен");
             onUploaded?.(photo);
           } catch (error) {
+            if (showProgressToast) {
+              dismissToast(progressToastId);
+            }
+
             const detail = getApiErrorDetail(error);
 
             setUploads((current) =>
@@ -79,6 +105,7 @@ export function usePhotoUpload() {
                   : item,
               ),
             );
+            showErrorToast(error);
           }
         }),
       );

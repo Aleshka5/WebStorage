@@ -6,6 +6,8 @@ export const EVENT_PRIVATE_EXPIRED = PRIVATE_SESSION_EXPIRED_EVENT;
 export interface ApiErrorDetail {
   error_code?: string;
   message?: string;
+  available_bytes?: number;
+  retry_after?: number;
 }
 
 const api = axios.create({

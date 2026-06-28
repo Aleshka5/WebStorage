@@ -1,11 +1,8 @@
-from functools import lru_cache
-
 from fastapi import Depends, HTTPException, Request, status
 
 from app.application.file_service import FileService
 from app.application.private_service import PrivateService
 from app.domain.entities.user import User
-from app.domain.exceptions import PrivateSessionExpiredError, StorageUnavailableError
 from app.domain.value_objects.error_codes import ErrorCode
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
@@ -51,21 +48,4 @@ async def get_private_file_service(
     private_service: PrivateService = Depends(get_private_service),
 ) -> FileService:
     session_id = _get_session_id(request)
-    try:
-        return await private_service.get_file_service(current_user.id, session_id)
-    except PrivateSessionExpiredError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error_code": ErrorCode.PRIVATE_SESSION_EXPIRED,
-                "message": str(exc),
-            },
-        ) from exc
-    except StorageUnavailableError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "error_code": ErrorCode.DISK_UNAVAILABLE,
-                "message": str(exc),
-            },
-        ) from exc
+    return await private_service.get_file_service(current_user.id, session_id)

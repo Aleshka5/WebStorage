@@ -18,6 +18,7 @@ import {
 import { useQuotaStore } from "../../store/quota";
 import type { FileManagerMode, FileNode, SortDirection, SortField } from "../../types/files";
 import { ErrorMessage } from "../ui/ErrorMessage";
+import { showErrorToast, showSuccessToast } from "../../utils/toast";
 import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
 import { CreateFolderDialog } from "./CreateFolderDialog";
@@ -156,8 +157,14 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
   };
 
   const handleCreateFolder = async (name: string) => {
-    await createDirectory(apiPrefix, currentPath, name);
-    await refreshDirectory();
+    try {
+      await createDirectory(apiPrefix, currentPath, name);
+      await refreshDirectory();
+      showSuccessToast("Папка создана");
+    } catch (error) {
+      showErrorToast(error);
+      throw error;
+    }
   };
 
   const handleDownload = async (item: FileNode) => {
@@ -185,6 +192,9 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
     try {
       await handleDelete(itemToDelete);
       setItemToDelete(null);
+      showSuccessToast("Файл удалён");
+    } catch (error) {
+      showErrorToast(error);
     } finally {
       setIsDeleting(false);
     }

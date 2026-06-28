@@ -11,13 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.file_service import FileService
 from app.domain.entities.file_record import FileRecord, FileSection
 from app.domain.entities.user import User
-from app.domain.exceptions import (
-    AccessDeniedError,
-    FileNotFoundError,
-    PathTraversalError,
-    QuotaExceededError,
-    StorageUnavailableError,
-)
+from app.domain.exceptions import QuotaExceededError
 from app.domain.value_objects.error_codes import ErrorCode
 from app.domain.value_objects.role import Role
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
@@ -64,50 +58,6 @@ def _file_record_response(record: FileRecord) -> FileRecordResponse:
     )
 
 
-def _raise_http_for_domain_error(exc: Exception) -> None:
-    if isinstance(exc, PathTraversalError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error_code": ErrorCode.PATH_TRAVERSAL_DETECTED,
-                "message": str(exc),
-            },
-        ) from exc
-    if isinstance(exc, QuotaExceededError):
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail={
-                "error_code": ErrorCode.QUOTA_EXCEEDED,
-                "message": str(exc),
-            },
-        ) from exc
-    if isinstance(exc, FileNotFoundError):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error_code": ErrorCode.FILE_NOT_FOUND,
-                "message": str(exc),
-            },
-        ) from exc
-    if isinstance(exc, AccessDeniedError):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error_code": ErrorCode.ACCESS_DENIED,
-                "message": str(exc),
-            },
-        ) from exc
-    if isinstance(exc, StorageUnavailableError):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "error_code": ErrorCode.DISK_UNAVAILABLE,
-                "message": str(exc),
-            },
-        ) from exc
-    raise exc
-
-
 async def _ensure_upload_quota(
     user_id: UUID,
     role: Role,
@@ -127,7 +77,8 @@ async def _ensure_upload_quota(
             size,
         )
         raise QuotaExceededError(
-            f"Upload size {size} bytes exceeds available quota ({available} bytes remaining)"
+            f"Upload size {size} bytes exceeds available quota ({available} bytes remaining)",
+            available_bytes=available,
         )
 
 
@@ -150,8 +101,8 @@ async def list_files(
 
     try:
         nodes = await file_service.list_directory(current_user.id, normalized)
-    except Exception as exc:
-        _raise_http_for_domain_error(exc)
+    except Exception:
+        raise
 
     api_base = path.strip().replace("\\", "/").rstrip("/") or "/"
     return [
@@ -218,9 +169,9 @@ async def upload_file(
             section=FileSection.FILES,
         )
         await session.commit()
-    except Exception as exc:
+    except Exception:
         await session.rollback()
-        _raise_http_for_domain_error(exc)
+        raise
 
     logger.info("Upload completed for user {} file {}", current_user.id, record.id)
     return _file_record_response(record)
@@ -238,8 +189,8 @@ async def download_file(
 
     try:
         stream = file_service.read_by_path(current_user.id, normalized)
-    except Exception as exc:
-        _raise_http_for_domain_error(exc)
+    except Exception:
+        raise
 
     media_type = mimetypes.guess_type(filename)[0] or DEFAULT_MIME_TYPE
     return StreamingResponse(
@@ -265,9 +216,9 @@ async def delete_file(
             actor_role=current_user.role,
         )
         await session.commit()
-    except Exception as exc:
+    except Exception:
         await session.rollback()
-        _raise_http_for_domain_error(exc)
+        raise
 
     logger.info("Deleted path {} for user {}", path, current_user.id)
 
@@ -290,9 +241,9 @@ async def create_directory(
     try:
         await file_service.create_directory(current_user.id, normalized, body.name)
         await session.commit()
-    except Exception as exc:
+    except Exception:
         await session.rollback()
-        _raise_http_for_domain_error(exc)
+        raise
 
     created_path = _build_api_path(body.path, body.name)
     logger.info("Directory created for user {} at {}", current_user.id, created_path)
@@ -324,9 +275,9 @@ async def rename_file(
             body.new_name,
         )
         await session.commit()
-    except Exception as exc:
+    except Exception:
         await session.rollback()
-        _raise_http_for_domain_error(exc)
+        raise
 
     if record is None:
         logger.info("Renamed directory {} for user {}", body.path, current_user.id)
@@ -365,8 +316,8 @@ async def list_shared_files(
 
     try:
         nodes = await file_service.list_directory(current_user.id, normalized)
-    except Exception as exc:
-        _raise_http_for_domain_error(exc)
+    except Exception:
+        raise
 
     api_base = path.strip().replace("\\", "/").rstrip("/") or "/"
     return [
@@ -433,9 +384,9 @@ async def upload_shared_file(
             section=FileSection.SHARED,
         )
         await session.commit()
-    except Exception as exc:
+    except Exception:
         await session.rollback()
-        _raise_http_for_domain_error(exc)
+        raise
 
     logger.info("Shared upload completed for user {} file {}", current_user.id, record.id)
     return _file_record_response(record)
@@ -453,8 +404,8 @@ async def download_shared_file(
 
     try:
         stream = file_service.read_by_path(current_user.id, normalized)
-    except Exception as exc:
-        _raise_http_for_domain_error(exc)
+    except Exception:
+        raise
 
     media_type = mimetypes.guess_type(filename)[0] or DEFAULT_MIME_TYPE
     return StreamingResponse(
@@ -480,9 +431,9 @@ async def delete_shared_file(
             actor_role=current_user.role,
         )
         await session.commit()
-    except Exception as exc:
+    except Exception:
         await session.rollback()
-        _raise_http_for_domain_error(exc)
+        raise
 
     logger.info("Deleted shared path {} for user {}", path, current_user.id)
 
@@ -505,9 +456,9 @@ async def create_shared_directory(
     try:
         await file_service.create_directory(current_user.id, normalized, body.name)
         await session.commit()
-    except Exception as exc:
+    except Exception:
         await session.rollback()
-        _raise_http_for_domain_error(exc)
+        raise
 
     created_path = _build_api_path(body.path, body.name)
     logger.info("Shared directory created for user {} at {}", current_user.id, created_path)
@@ -539,9 +490,9 @@ async def rename_shared_file(
             body.new_name,
         )
         await session.commit()
-    except Exception as exc:
+    except Exception:
         await session.rollback()
-        _raise_http_for_domain_error(exc)
+        raise
 
     if record is None:
         logger.info("Renamed shared directory {} for user {}", body.path, current_user.id)
