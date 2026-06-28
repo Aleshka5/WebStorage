@@ -523,6 +523,53 @@ class FileRepository:
         logger.info("Marked file record {} as deleted", file_id)
         return self._to_entity(model)
 
+    async def list_stale_pending(self, cutoff: datetime) -> list[FileRecordEntity]:
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.status == FileStatusModel.PENDING,
+                FileRecordModel.created_at < cutoff,
+            )
+        )
+        records = [self._to_entity(model) for model in result.scalars().all()]
+        logger.info(
+            "Found {} stale PENDING file records (cutoff={})",
+            len(records),
+            cutoff.isoformat(),
+        )
+        return records
+
+    async def hard_delete(self, file_id: UUID) -> bool:
+        model = await self._session.get(FileRecordModel, file_id)
+        if model is None:
+            logger.warning("File record {} not found for hard deletion", file_id)
+            return False
+
+        await self._session.delete(model)
+        await self._session.flush()
+        logger.info("Hard-deleted file record {}", file_id)
+        return True
+
+    async def sum_committed_bytes_by_user(self, user_id: UUID) -> int:
+        result = await self._session.execute(
+            select(func.coalesce(func.sum(FileRecordModel.size_bytes), 0)).where(
+                FileRecordModel.user_id == user_id,
+                FileRecordModel.status == FileStatusModel.COMMITTED,
+            )
+        )
+        total = int(result.scalar_one())
+        logger.info("Committed bytes for user {}: {}", user_id, total)
+        return total
+
+    async def list_distinct_user_ids_with_committed(self) -> list[UUID]:
+        result = await self._session.execute(
+            select(FileRecordModel.user_id)
+            .where(FileRecordModel.status == FileStatusModel.COMMITTED)
+            .distinct()
+        )
+        user_ids = list(result.scalars().all())
+        logger.info("Found {} users with committed file records", len(user_ids))
+        return user_ids
+
     @staticmethod
     def _is_direct_child(relative_path: str, parent_prefix: str) -> bool:
         parent = parent_prefix.rstrip("/")

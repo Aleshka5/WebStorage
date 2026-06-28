@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from loguru import logger
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.file_record import FileSection
@@ -141,3 +141,28 @@ class QuotaRepository:
             limit_bytes,
         )
         return model
+
+    async def update_total_bytes(self, user_id: UUID, total_bytes: int) -> UserQuotaUsage:
+        await self.get_by_user_id(user_id)
+
+        stmt = (
+            update(UserQuotaUsage)
+            .where(UserQuotaUsage.user_id == user_id)
+            .values(total_bytes=total_bytes)
+            .returning(UserQuotaUsage)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one()
+        await self._session.refresh(model)
+        logger.info(
+            "Updated total quota for user {} to {} bytes",
+            user_id,
+            total_bytes,
+        )
+        return model
+
+    async def list_all_user_ids(self) -> list[UUID]:
+        result = await self._session.execute(select(UserQuotaUsage.user_id))
+        user_ids = list(result.scalars().all())
+        logger.info("Listed {} user quota records", len(user_ids))
+        return user_ids

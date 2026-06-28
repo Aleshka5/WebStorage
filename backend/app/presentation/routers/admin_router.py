@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.admin_service import AdminService, DiskStat, UserAdminView
 from app.application.archive_service import ArchiveService
+from app.application.maintenance_service import MaintenanceService
 from app.domain.entities.user import User
 from app.domain.exceptions import SelfRoleChangeError, SelfUserDeletionError, UserNotFoundError
 from app.domain.value_objects.error_codes import ErrorCode
@@ -14,11 +15,15 @@ from app.infrastructure.database.session import get_async_session
 from app.infrastructure.disk_router import DiskRouter
 from app.presentation.dependencies.admin import get_admin_service, get_disk_router
 from app.presentation.dependencies.archive import get_archive_service
+from app.presentation.dependencies.maintenance import get_maintenance_service
 from app.presentation.middleware.check_role import check_role
 from app.presentation.schemas.admin import (
     ArchiveReportResponse,
     ArchiveStatsResponse,
     DiskStatResponse,
+    MaintenanceRunResponse,
+    MaintenanceStatsResponse,
+    ReconcileReportResponse,
     StorageHealthResponse,
     StorageStatsResponse,
     UpdatePrivateQuotaRequest,
@@ -220,3 +225,42 @@ async def get_archive_stats(
     stats = await archive_service.get_stats()
     logger.info("Admin archive stats requested")
     return ArchiveStatsResponse.from_stats(stats)
+
+
+@router.get("/maintenance/run", response_model=MaintenanceRunResponse)
+async def run_maintenance(
+    _admin: User = Depends(check_role(Role.ADMIN)),
+    maintenance_service: MaintenanceService = Depends(get_maintenance_service),
+    archive_service: ArchiveService = Depends(get_archive_service),
+    session: AsyncSession = Depends(get_async_session),
+) -> MaintenanceRunResponse:
+    pending_deleted = await maintenance_service.cleanup_pending_records()
+    tmp_deleted = await maintenance_service.cleanup_tmp_dirs()
+    reconcile = await maintenance_service.reconcile_quotas()
+    archive = await archive_service.run_daily_archive()
+    await session.commit()
+
+    logger.info(
+        "Manual maintenance run completed: pending_deleted={}, tmp_deleted={}, "
+        "quota_fixed={}, archive_processed={}",
+        pending_deleted,
+        tmp_deleted,
+        reconcile.fixed,
+        archive.processed,
+    )
+    return MaintenanceRunResponse(
+        pending_deleted=pending_deleted,
+        tmp_deleted=tmp_deleted,
+        reconcile=ReconcileReportResponse.from_report(reconcile),
+        archive=ArchiveReportResponse.from_report(archive),
+    )
+
+
+@router.get("/maintenance/stats", response_model=MaintenanceStatsResponse)
+async def get_maintenance_stats(
+    _admin: User = Depends(check_role(Role.ADMIN)),
+    maintenance_service: MaintenanceService = Depends(get_maintenance_service),
+) -> MaintenanceStatsResponse:
+    stats = await maintenance_service.get_stats()
+    logger.info("Admin maintenance stats requested")
+    return MaintenanceStatsResponse.from_stats(stats)

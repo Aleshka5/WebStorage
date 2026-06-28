@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.application.admin_service import DiskStat, UserAdminView
 from app.application.archive_service import ArchiveReport, ArchiveStats
+from app.application.maintenance_service import MaintenanceStats, ReconcileReport
 from app.domain.entities.user import User
 from app.domain.value_objects.role import Role
 
@@ -111,4 +112,42 @@ class ArchiveStatsResponse(BaseModel):
             skipped=stats.skipped,
             errors=stats.errors,
             total_archived_bytes=stats.total_archived_bytes,
+        )
+
+
+class ReconcileReportResponse(BaseModel):
+    checked: int = Field(ge=0)
+    fixed: int = Field(ge=0)
+
+    @classmethod
+    def from_report(cls, report: ReconcileReport) -> "ReconcileReportResponse":
+        return cls(checked=report.checked, fixed=report.fixed)
+
+
+class MaintenanceRunResponse(BaseModel):
+    pending_deleted: int = Field(ge=0)
+    tmp_deleted: int = Field(ge=0)
+    reconcile: ReconcileReportResponse
+    archive: ArchiveReportResponse
+
+
+class MaintenanceStatsResponse(BaseModel):
+    last_pending_cleanup: datetime | None
+    pending_deleted: int = Field(ge=0)
+    last_tmp_cleanup: datetime | None
+    tmp_deleted: int = Field(ge=0)
+    last_quota_reconcile: datetime | None
+    quota_checked: int = Field(ge=0)
+    quota_fixed: int = Field(ge=0)
+
+    @classmethod
+    def from_stats(cls, stats: MaintenanceStats) -> "MaintenanceStatsResponse":
+        return cls(
+            last_pending_cleanup=stats.last_pending_cleanup,
+            pending_deleted=stats.pending_deleted,
+            last_tmp_cleanup=stats.last_tmp_cleanup,
+            tmp_deleted=stats.tmp_deleted,
+            last_quota_reconcile=stats.last_quota_reconcile,
+            quota_checked=stats.quota_checked,
+            quota_fixed=stats.quota_fixed,
         )
