@@ -63,6 +63,16 @@ class AdminSettings(BaseSettings):
     password: str = Field(default="", validation_alias="ADMIN_PASSWORD")
 
 
+class LoggingSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    file_enabled: bool = Field(default=False, validation_alias="LOG_FILE_ENABLED")
+    file_path: str = Field(default="/var/log/homecloud/app.log", validation_alias="LOG_FILE_PATH")
+    file_rotation: str = Field(default="100 MB", validation_alias="LOG_FILE_ROTATION")
+    file_retention: str = Field(default="30 days", validation_alias="LOG_FILE_RETENTION")
+
+
 class Settings:
     def __init__(self) -> None:
         self.database = DatabaseSettings()
@@ -71,6 +81,7 @@ class Settings:
         self.auth = AuthSettings()
         self.business_logic = BusinessLogicSettings()
         self.admin = AdminSettings()
+        self.logging = LoggingSettings()
 
 
 @lru_cache

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.application.admin_service import DiskStat, UserAdminView
 from app.application.archive_service import ArchiveReport, ArchiveStats
+from app.application.backup_service import BackupEntry
 from app.application.maintenance_service import MaintenanceStats, ReconcileReport
 from app.domain.entities.user import User
 from app.domain.value_objects.role import Role
@@ -151,3 +152,27 @@ class MaintenanceStatsResponse(BaseModel):
             quota_checked=stats.quota_checked,
             quota_fixed=stats.quota_fixed,
         )
+
+
+class BackupEntryResponse(BaseModel):
+    filename: str
+    created_at: datetime
+    size_bytes: int = Field(ge=0)
+
+    @classmethod
+    def from_entry(cls, entry: BackupEntry) -> "BackupEntryResponse":
+        return cls(
+            filename=entry.filename,
+            created_at=entry.created_at,
+            size_bytes=entry.size_bytes,
+        )
+
+
+class BackupListResponse(BaseModel):
+    items: list[BackupEntryResponse]
+
+
+class BackupRunResponse(BaseModel):
+    filename: str
+    path: str
+    size_bytes: int = Field(ge=0)

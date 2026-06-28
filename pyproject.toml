@@ -25,4 +25,5 @@ dependencies = [
     "email-validator",
     "aiofiles",
     "python-multipart",
+    "python-json-logger>=4.1.0",
 ]

@@ -6,34 +6,50 @@
 
 - Docker Desktop (или Docker Engine + Docker Compose v2)
 - Node.js 20+ (только для локального запуска frontend)
+- Git
 
-## Первый запуск
+## Быстрый старт
+
+### 1. Клонировать репозиторий
+
+```bash
+git clone <url-репозитория> WebStorage
+cd WebStorage
+```
+
+### 2. Настроить окружение
 
 ```bash
 cp .env.example .env
 ```
 
-В `.env` задайте как минимум `JWT_SECRET` и `POSTGRES_PASSWORD` (и обновите `DATABASE_URL`, если меняли пароль БД).
+В `.env` обязательно задайте:
 
-### Backend (FastAPI + PostgreSQL + Redis)
+- `JWT_SECRET` — случайная строка (например, `openssl rand -hex 32`)
+- `POSTGRES_PASSWORD` — пароль PostgreSQL (и обновите `DATABASE_URL`, если меняли пароль)
+- `ADMIN_EMAIL` и `ADMIN_PASSWORD` — учётные данные первого администратора
 
-```bash
-docker compose up --build
-```
-
-Фоновый режим:
+### 3. Запустить backend
 
 ```bash
 docker compose up --build -d
 ```
 
-Проверка API: [http://localhost:8000](http://localhost:8000) — ответ `{"status": "ok", "version": "1.0"}`.
+Проверка: [http://localhost:8000](http://localhost:8000) — ответ `{"status": "ok", "version": "1.0"}`.
 
 При каждом старте контейнера `app` автоматически выполняется `alembic upgrade head`.
 
-### Frontend (Vite + React)
+### 4. Инициализировать хранилище и администратора
 
-Frontend не входит в `docker-compose`. Запуск отдельно:
+```bash
+docker compose exec app python scripts/init_storage.py
+docker compose exec app python scripts/init_db.py
+```
+
+`init_storage.py` создаёт структуру папок на диске (`users/`, `shared/`, `_meta/backups/`).
+`init_db.py` создаёт первого пользователя с ролью ADMIN из переменных `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+
+### 5. Запустить frontend
 
 ```bash
 cd frontend
@@ -41,18 +57,119 @@ npm install
 npm run dev
 ```
 
-Интерфейс: [http://localhost:5173](http://localhost:5173).
+Интерфейс: [http://localhost:5173](http://localhost:5173). Войдите с email и паролем администратора.
 
-Через Docker (альтернатива; backend должен быть доступен на порту 8000 хоста):
+---
+
+## Создание первого администратора
+
+Администратор создаётся однократно скриптом `init_db.py`:
 
 ```bash
-docker build -t homecloud-frontend ./frontend
-docker run --rm -p 5173:5173 homecloud-frontend
+docker compose exec app python scripts/init_db.py
 ```
 
-Proxy Vite по умолчанию направляет `/api` на `http://host.docker.internal:8000` (для контейнера).
-При локальном `npm run dev` используется `http://localhost:8000`.
-Переопределение: `API_PROXY_TARGET=http://app:8000 npm run dev`.
+Перед запуском задайте в `.env`:
+
+| Переменная | Описание |
+|---|---|
+| `ADMIN_EMAIL` | Email администратора |
+| `ADMIN_PASSWORD` | Пароль администратора |
+
+Если пользователь с таким email уже существует, скрипт завершится без изменений. После создания войдите через форму входа на frontend или API `POST /api/auth/login`.
+
+---
+
+## Добавление нового диска
+
+1. Создайте папку на хосте, например `./storage/disk2`.
+2. Добавьте volume в `docker-compose.yml`:
+   ```yaml
+   - ./storage/disk2:/storage/disk2
+   ```
+3. В `.env` укажите `STORAGE_DISKS=disk1,disk2`.
+4. Перезапустите контейнеры:
+   ```bash
+   docker compose down
+   docker compose up -d
+   ```
+5. Инициализируйте структуру на новом диске:
+   ```bash
+   docker compose exec app python scripts/init_storage.py
+   ```
+
+Существующие файлы остаются на своих дисках; новые записи распределяются по свободному месту (`DiskRouter`).
+
+Резервные копии метаданных БД сохраняются на первом диске из `STORAGE_DISKS` (по умолчанию `disk1`) в `_meta/backups/`.
+
+---
+
+## Восстановление из бэкапа
+
+HomeCloud автоматически создаёт сжатые дампы PostgreSQL каждый день в 02:00 (и по запросу через API). Файлы хранятся в:
+
+```
+/storage/disk1/_meta/backups/db_backup_YYYY-MM-DD_HH-MM-SS.sql.zst
+```
+
+На хосте (при стандартном монтировании): `./storage/disk1/_meta/backups/`.
+
+### Список бэкапов (API)
+
+```bash
+curl -b cookies.txt http://localhost:8000/api/admin/backup/list
+```
+
+Требуется авторизация с ролью ADMIN (cookie `access_token` после входа).
+
+### Ручной запуск бэкапа
+
+```bash
+curl -b cookies.txt http://localhost:8000/api/admin/backup/run
+```
+
+### Восстановление базы данных
+
+1. Остановите приложение (чтобы не было активных подключений):
+   ```bash
+   docker compose stop app
+   ```
+
+2. Распакуйте бэкап. На хосте с установленным `zstd`:
+   ```bash
+   zstd -d storage/disk1/_meta/backups/db_backup_2026-06-28_02-00-00.sql.zst -o /tmp/restore.sql
+   ```
+
+   Или внутри контейнера через Python:
+   ```bash
+   docker compose run --rm app python -c "
+   import zstandard as zstd
+   from pathlib import Path
+   src = Path('/storage/disk1/_meta/backups/db_backup_2026-06-28_02-00-00.sql.zst')
+   dst = Path('/tmp/restore.sql')
+   dst.write_bytes(zstd.ZstdDecompressor().decompress(src.read_bytes()))
+   print('Decompressed to', dst)
+   "
+   ```
+
+3. Восстановите дамп в PostgreSQL:
+   ```bash
+   docker compose exec -T db psql -U homecloud -d homecloud < /tmp/restore.sql
+   ```
+
+   Если файл внутри контейнера `app`:
+   ```bash
+   docker compose exec -T app cat /tmp/restore.sql | docker compose exec -T db psql -U homecloud -d homecloud
+   ```
+
+4. Запустите приложение:
+   ```bash
+   docker compose start app
+   ```
+
+Бэкапы старше 30 дней удаляются автоматически при каждом новом бэкапе.
+
+---
 
 ## Полезные команды
 
@@ -60,7 +177,7 @@ Proxy Vite по умолчанию направляет `/api` на `http://host
 # статус контейнеров
 docker compose ps
 
-# логи backend
+# логи backend (структурированный JSON)
 docker compose logs -f app
 
 # остановка
@@ -79,6 +196,7 @@ HomeCloud разделяет **файлы** и **метаданные**:
 | Содержимое файлов (фото, документы, зашифрованные данные) | Файловая система на диске |
 | Метаданные (имя, размер, путь, владелец, квота) | PostgreSQL |
 | Сессии и кэш | Redis |
+| Резервные копии метаданных БД | `{STORAGE_ROOT}/disk1/_meta/backups/` |
 
 ### Структура на диске
 
@@ -95,14 +213,6 @@ HomeCloud разделяет **файлы** и **метаданные**:
     ├── shared/             ← общая папка (FAMILY, ADMIN)
     └── _meta/backups/      ← резервные копии БД
 ```
-
-При первом запуске создайте структуру папок:
-
-```bash
-docker compose exec app python scripts/init_storage.py
-```
-
-Какой диск выбрать для новой записи, решает `DiskRouter`: среди доступных дисков выбирается тот, где больше всего свободного места. В метаданных файла сохраняется `disk_id`, поэтому чтение всегда идёт с правильного диска, даже если позже добавите второй.
 
 ### Настройка при запуске
 
@@ -125,26 +235,19 @@ docker compose exec app python scripts/init_storage.py
 | `STRANGER_QUOTA_MB` | `100` | Лимит хранилища для роли STRANGER |
 | `ARCHIVE_DAYS_THRESHOLD` | `180` | Через сколько дней без доступа файл уходит в архив |
 
-**Первый администратор** (создаётся скриптом `init_db.py`):
+**Логирование:**
 
-| Переменная | Описание |
-|---|---|
-| `ADMIN_EMAIL` | Email администратора |
-| `ADMIN_PASSWORD` | Пароль администратора |
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `LOG_LEVEL` | `INFO` | Уровень логирования |
+| `LOG_FILE_ENABLED` | `false` | Запись логов в файл помимо stdout |
+| `LOG_FILE_PATH` | `/var/log/homecloud/app.log` | Путь к файлу логов |
+| `LOG_FILE_ROTATION` | `100 MB` | Ротация файла логов |
+| `LOG_FILE_RETENTION` | `30 days` | Хранение старых файлов логов |
 
-### Добавление второго диска
+Логи выводятся в формате JSON с полями: `timestamp`, `level`, `user_id`, `action`, `file_id`, `disk_id`, `result`, `error_code`. Содержимое файлов, пароли и ключи шифрования не логируются.
 
-1. Создайте папку на хосте, например `./storage/disk2`.
-2. Добавьте volume в `docker-compose.yml`:
-   ```yaml
-   - ./storage/disk2:/storage/disk2
-   ```
-3. В `.env` укажите `STORAGE_DISKS=disk1,disk2`.
-4. Перезапустите контейнеры и выполните `init_storage.py`.
-
-Существующие файлы остаются на своих дисках; новые записи распределяются по свободному месту.
-
-## Структура
+## Структура проекта
 
 - `backend/` — FastAPI-приложение
 - `frontend/` — React-приложение

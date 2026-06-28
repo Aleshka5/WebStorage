@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -5,10 +6,12 @@ from fastapi import FastAPI
 from loguru import logger
 
 from app.application.archive_service import ArchiveService
+from app.application.backup_service import BackupService
 from app.application.maintenance_service import MaintenanceService
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.database.session import async_session_factory
+from app.infrastructure.logging_setup import setup_logging
 from app.infrastructure.session_store import get_session_store
 from app.presentation.dependencies.archive_providers import (
     get_archive_disk_router,
@@ -23,6 +26,9 @@ from app.presentation.routers.quota_router import router as quota_router
 from app.presentation.exception_handlers import register_exception_handlers
 from app.presentation.middleware.rate_limit import AuthRateLimitMiddleware
 from config import get_settings
+
+settings = get_settings()
+setup_logging(settings)
 
 
 async def _run_daily_archive_job() -> None:
@@ -103,6 +109,24 @@ async def _run_reconcile_quotas_job() -> None:
             logger.exception("Scheduled reconcile_quotas job failed")
 
 
+async def _run_db_backup_job() -> None:
+    logger.bind(action="db_backup", result="started").info("Scheduled db backup job started")
+    backup_service = BackupService(
+        disk_router=get_archive_disk_router(),
+        settings=settings,
+    )
+    try:
+        path = await asyncio.to_thread(backup_service.run_db_backup)
+        logger.bind(action="db_backup", result="success").info(
+            "Scheduled db backup job completed: filename={}",
+            path.name,
+        )
+    except Exception:
+        logger.bind(action="db_backup", result="error", error_code="BACKUP_JOB_FAILED").exception(
+            "Scheduled db backup job failed",
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
@@ -136,9 +160,17 @@ async def lifespan(app: FastAPI):
         id="reconcile_quotas",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _run_db_backup_job,
+        "cron",
+        hour=2,
+        minute=0,
+        id="db_backup",
+        replace_existing=True,
+    )
     scheduler.start()
     logger.info(
-        "APScheduler started: daily_archive@03:00, cleanup_pending@1h, "
+        "APScheduler started: db_backup@02:00, daily_archive@03:00, cleanup_pending@1h, "
         "cleanup_tmp@1h, reconcile_quotas@04:00",
     )
     yield
