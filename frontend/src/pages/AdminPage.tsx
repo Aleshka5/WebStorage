@@ -30,11 +30,11 @@ function formatDiskBytes(bytes: number): string {
 function diskStatusLabel(status: string): string {
   switch (status) {
     case "HEALTHY":
-      return "Норма";
+      return "OK";
     case "LOW_SPACE":
-      return "Мало места";
+      return "Low space";
     case "UNAVAILABLE":
-      return "Недоступен";
+      return "Unavailable";
     default:
       return status;
   }

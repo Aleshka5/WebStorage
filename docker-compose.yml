@@ -9,12 +9,25 @@ services:
       - .env
     volumes:
       - ./backend:/app
-      - ./storage/disk1:/storage/disk1
+      - /home/aleksey/storage:/storage/disk1
+      - /run/media/aleksey/HardDisk/storage:/storage/disk2
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      API_PROXY_TARGET: http://app:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
 
   db:
     image: postgres:15

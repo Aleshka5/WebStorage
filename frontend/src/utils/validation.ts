@@ -2,10 +2,10 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function validateEmail(email: string): string | undefined {
   if (!email.trim()) {
-    return "Введите email";
+    return "Enter email";
   }
   if (!EMAIL_PATTERN.test(email.trim())) {
-    return "Некорректный формат email";
+    return "Invalid email format";
   }
   return undefined;
 }
@@ -22,7 +22,7 @@ export function validatePasswordMatch(
   confirmPassword: string,
 ): string | undefined {
   if (password !== confirmPassword) {
-    return "Пароли не совпадают";
+    return "Passwords do not match";
   }
   return undefined;
 }
@@ -33,15 +33,15 @@ export function validateFileName(name: string): string | undefined {
   const trimmed = name.trim();
 
   if (!trimmed) {
-    return "Введите имя";
+    return "Enter name";
   }
 
   if (trimmed === "." || trimmed === "..") {
-    return "Недопустимое имя";
+    return "Invalid name";
   }
 
   if (INVALID_FILE_NAME_CHARS.test(trimmed)) {
-    return 'Имя содержит недопустимые символы: / \\ : * ? " < > |';
+    return 'Name contains invalid characters: / \ : * ? " < > |';
   }
 
   return undefined;

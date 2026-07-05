@@ -1,55 +1,55 @@
 # HomeCloud
 
-Самохостируемое сетевое хранилище с веб-интерфейсом. Разворачивается через Docker.
+Self-hosted network storage with a web interface. Deployed via Docker.
 
-## Требования
+## Requirements
 
-- Docker Desktop (или Docker Engine + Docker Compose v2)
-- Node.js 20+ (только для локального запуска frontend)
+- Docker Desktop (or Docker Engine + Docker Compose v2)
+- Node.js 20+ (for local frontend execution only)
 - Git
 
-## Быстрый старт
+## Quick Start
 
-### 1. Клонировать репозиторий
+### 1. Clone the repository
 
 ```bash
-git clone <url-репозитория> WebStorage
+git clone <repository-url> WebStorage
 cd WebStorage
 ```
 
-### 2. Настроить окружение
+### 2. Configure the environment
 
 ```bash
 cp .env.example .env
 ```
 
-В `.env` обязательно задайте:
+In `.env`, you must set:
 
-- `JWT_SECRET` — случайная строка (например, `openssl rand -hex 32`)
-- `POSTGRES_PASSWORD` — пароль PostgreSQL (и обновите `DATABASE_URL`, если меняли пароль)
-- `ADMIN_EMAIL` и `ADMIN_PASSWORD` — учётные данные первого администратора
+- `JWT_SECRET` — a random string (e.g., `openssl rand -hex 32`)
+- `POSTGRES_PASSWORD` — PostgreSQL password (and update `DATABASE_URL` if you changed it)
+- `ADMIN_EMAIL` and `ADMIN_PASSWORD` — credentials for the first administrator
 
-### 3. Запустить backend
+### 3. Run the backend
 
 ```bash
 docker compose up --build -d
 ```
 
-Проверка: [http://localhost:8000](http://localhost:8000) — ответ `{"status": "ok", "version": "1.0"}`.
+Verification: [http://localhost:8000](http://localhost:8000) — responds with `{"status": "ok", "version": "1.0"}`.
 
-При каждом старте контейнера `app` автоматически выполняется `alembic upgrade head`.
+On every `app` container startup, `alembic upgrade head` is automatically executed.
 
-### 4. Инициализировать хранилище и администратора
+### 4. Initialize storage and administrator
 
 ```bash
 docker compose exec app python scripts/init_storage.py
 docker compose exec app python scripts/init_db.py
 ```
 
-`init_storage.py` создаёт структуру папок на диске (`users/`, `shared/`, `_meta/backups/`).
-`init_db.py` создаёт первого пользователя с ролью ADMIN из переменных `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+`init_storage.py` creates the folder structure on disk (`users/`, `shared/`, `_meta/backups/`).
+`init_db.py` creates the first user with the `ADMIN` role using `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
 
-### 5. Запустить frontend
+### 5. Run the frontend
 
 ```bash
 cd frontend
@@ -57,90 +57,96 @@ npm install
 npm run dev
 ```
 
-Интерфейс: [http://localhost:5173](http://localhost:5173). Войдите с email и паролем администратора.
+```bash
+docker run -p 5173:5173 --add-host=host.docker.internal:host-gateway container_name
+```
+
+Interface: [http://localhost:5173](http://localhost:5173). Log in with administrator email and password.
 
 ---
 
-## Создание первого администратора
+## Creating the first administrator
 
-Администратор создаётся однократно скриптом `init_db.py`:
+The administrator is created once by the `init_db.py` script:
 
 ```bash
 docker compose exec app python scripts/init_db.py
 ```
 
-Перед запуском задайте в `.env`:
+Before running, set these in `.env`:
 
-| Переменная | Описание |
+| Variable | Description |
 |---|---|
-| `ADMIN_EMAIL` | Email администратора |
-| `ADMIN_PASSWORD` | Пароль администратора |
+| `ADMIN_EMAIL` | Administrator email |
+| `ADMIN_PASSWORD` | Administrator password |
 
-Если пользователь с таким email уже существует, скрипт завершится без изменений. После создания войдите через форму входа на frontend или API `POST /api/auth/login`.
+If a user with such an email already exists, the script will finish without changes. After creation, log in through the frontend login form or via API `POST /api/auth/login`.
 
 ---
 
-## Добавление нового диска
+## Adding a new disk
 
-1. Создайте папку на хосте, например `./storage/disk2`.
-2. Добавьте volume в `docker-compose.yml`:
+1. Create a folder on the host, e.g., `./storage/disk2`.
+2. Add a volume in `docker-compose.yml`:
    ```yaml
    - ./storage/disk2:/storage/disk2
    ```
-3. В `.env` укажите `STORAGE_DISKS=disk1,disk2`.
-4. Перезапустите контейнеры:
+3. In `.env`, specify `STORAGE_DISKS=disk1,disk2`.
+4. Restart the containers:
    ```bash
    docker compose down
    docker compose up -d
    ```
-5. Инициализируйте структуру на новом диске:
+5. Initialize the structure on the new disk:
    ```bash
    docker compose exec app python scripts/init_storage.py
    ```
 
-Существующие файлы остаются на своих дисках; новые записи распределяются по свободному месту (`DiskRouter`).
+Existing files remain on their respective disks; new entries are distributed based on available space (`DiskRouter`).
 
-Резервные копии метаданных БД сохраняются на первом диске из `STORAGE_DISKS` (по умолчанию `disk1`) в `_meta/backups/`.
+Metadata DB backups are saved on the first disk in `STORAGE_DISKS` (default `disk1`) at `_meta/backups/`.
 
 ---
 
-## Восстановление из бэкапа
 
-HomeCloud автоматически создаёт сжатые дампы PostgreSQL каждый день в 02:00 (и по запросу через API). Файлы хранятся в:
+
+## Restoring from backup
+
+HomeCloud automatically creates compressed PostgreSQL dumps every day at 02:00 (and upon API request). Files are stored in:
 
 ```
 /storage/disk1/_meta/backups/db_backup_YYYY-MM-DD_HH-MM-SS.sql.zst
 ```
 
-На хосте (при стандартном монтировании): `./storage/disk1/_meta/backups/`.
+On the host (with standard mounting): `./storage/disk1/_meta/backups/`.
 
-### Список бэкапов (API)
+### List backups (API)
 
 ```bash
 curl -b cookies.txt http://localhost:8000/api/admin/backup/list
 ```
 
-Требуется авторизация с ролью ADMIN (cookie `access_token` после входа).
+Requires `ADMIN` role authorization (cookie `access_token` after login).
 
-### Ручной запуск бэкапа
+### Manual backup trigger
 
 ```bash
 curl -b cookies.txt http://localhost:8000/api/admin/backup/run
 ```
 
-### Восстановление базы данных
+### Database restoration
 
-1. Остановите приложение (чтобы не было активных подключений):
+1. Stop the application (to avoid active connections):
    ```bash
    docker compose stop app
    ```
 
-2. Распакуйте бэкап. На хосте с установленным `zstd`:
+2. Decompress the backup. On a host with `zstd` installed:
    ```bash
    zstd -d storage/disk1/_meta/backups/db_backup_2026-06-28_02-00-00.sql.zst -o /tmp/restore.sql
    ```
 
-   Или внутри контейнера через Python:
+   Or inside the container using Python:
    ```bash
    docker compose run --rm app python -c "
    import zstandard as zstd
@@ -152,106 +158,104 @@ curl -b cookies.txt http://localhost:8000/api/admin/backup/run
    "
    ```
 
-3. Восстановите дамп в PostgreSQL:
+3. Restore the dump into PostgreSQL:
    ```bash
-   docker compose exec -T db psql -U homecloud -d homecloud < /tmp/restore.sql
+    docker compose exec -T db psql -U homecloud -d homecloud < /tmp/restore.sql
    ```
 
-   Если файл внутри контейнера `app`:
+   If the file is inside the `app` container:
    ```bash
    docker compose exec -T app cat /tmp/restore.sql | docker compose exec -T db psql -U homecloud -d homecloud
    ```
 
-4. Запустите приложение:
+4. Start the application:
    ```bash
    docker compose start app
    ```
 
-Бэкапы старше 30 дней удаляются автоматически при каждом новом бэкапе.
+Backups older than 30 days are automatically deleted with each new backup.
 
 ---
 
-## Полезные команды
+## Useful commands
 
 ```bash
-# статус контейнеров
+# container status
 docker compose ps
 
-# логи backend (структурированный JSON)
+# backend logs (structured JSON)
 docker compose logs -f app
 
-# остановка
+# stop
 docker compose down
 
-# остановка с удалением volumes БД и Redis
+# stop and remove DB and Redis volumes
 docker compose down -v
 ```
 
-## Хранение данных
+## Data storage
 
-HomeCloud разделяет **файлы** и **метаданные**:
+HomeCloud separates **files** and **metadata**:
 
-| Что | Где |
+| What | Where |
 |---|---|
-| Содержимое файлов (фото, документы, зашифрованные данные) | Файловая система на диске |
-| Метаданные (имя, размер, путь, владелец, квота) | PostgreSQL |
-| Сессии и кэш | Redis |
-| Резервные копии метаданных БД | `{STORAGE_ROOT}/disk1/_meta/backups/` |
+| File content (photos, documents, encrypted data) | Filesystem on disk |
+| Metadata (name, size, path, owner, quota) | PostgreSQL |
+| Sessions and cache | Redis |
+| Database metadata backups | `{STORAGE_ROOT}/disk1/_meta/backups/` |
 
-### Структура на диске
+### Disk structure
 
-Корень хранилища в контейнере — `/storage` (на хосте по умолчанию `./storage/disk1` монтируется в `/storage/disk1`).
+Storage root in the container is `/storage` (on host, `./storage/disk1` is mounted to `/storage/disk1` by default).
 
 ```
 /storage/
 └── disk1/
-    ├── users/              ← личные файлы пользователей
+    ├── users/              ← user private files
     │   └── {user_id}/
     │       ├── photos/
     │       ├── files/
     │       └── private/
-    ├── shared/             ← общая папка (FAMILY, ADMIN)
-    └── _meta/backups/      ← резервные копии БД
+    ├── shared/             ← shared folder (FAMILY, ADMIN)
+    └── _meta/backups/      ← DB backups
 ```
 
-### Настройка при запуске
+### Startup configuration
 
-Все параметры задаются в `.env` (шаблон — `.env.example`).
+All parameters are set in `.env` (template — `.env.example`).
 
-**Хранилище и диски:**
+**Storage and disks:**
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |---|---|---|
-| `STORAGE_ROOT` | `/storage` | Корень хранилища внутри контейнера |
-| `STORAGE_DISKS` | `disk1` | Список активных дисков через запятую (`disk1,disk2`) |
-| `DISK_STRATEGY` | `most_free_space` | Стратегия выбора диска для записи |
-| `MIN_FREE_SPACE_MB` | `500` | Минимум свободного места на диске для записи |
-| `DISK_SPACE_CACHE_TTL` | `30` | Кэш проверки свободного места, секунды |
+| `STORAGE_ROOT` | `/storage` | Storage root inside the container |
+| `STORAGE_DISKS` | `disk1` | List of active disks separated by commas (`disk1,disk2`) |
+| `DISK_STRATEGY` | `most_free_space` | Strategy for choosing disk for writing |
+| `MIN_FREE_SPACE_MB` | `500` | Minimum free space on disk required for writing |
+| `DISK_SPACE_CACHE_TTL` | `30` | Cache duration for checking free space, seconds |
 
-**Квоты и архивирование:**
+**Quotas and archiving:**
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |---|---|---|
-| `STRANGER_QUOTA_MB` | `100` | Лимит хранилища для роли STRANGER |
-| `ARCHIVE_DAYS_THRESHOLD` | `180` | Через сколько дней без доступа файл уходит в архив |
+| `STRANGER_QUOTA_MB` | `100` | Storage limit for STRANGER role |
+| `ARCHIVE_DAYS_THRESHOLD` | `180` | Number of days without access before file is archived |
 
-**Логирование:**
+**Logging:**
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |---|---|---|
-| `LOG_LEVEL` | `INFO` | Уровень логирования |
-| `LOG_FILE_ENABLED` | `false` | Запись логов в файл помимо stdout |
-| `LOG_FILE_PATH` | `/var/log/homecloud/app.log` | Путь к файлу логов |
-| `LOG_FILE_ROTATION` | `100 MB` | Ротация файла логов |
-| `LOG_FILE_RETENTION` | `30 days` | Хранение старых файлов логов |
+| `LOG_LEVEL` | `INFO` | Logging level |
+| `LOG_FILE_ENABLED` | `false` | Log writing to file in addition to stdout |
+| `LOG_FILE_PATH` | `/var/log/homecloud/app.log` | Path to log file |
+| `LOG_FILE_ROTATION` | `100 MB` | Log file rotation size |
+| `LOG_FILE_RETENTION` | `30 days` | Retention of old log files |
 
-Логи выводятся в формате JSON с полями: `timestamp`, `level`, `user_id`, `action`, `file_id`, `disk_id`, `result`, `error_code`. Содержимое файлов, пароли и ключи шифрования не логируются.
+Logs are output in JSON format with fields: `timestamp`, `level`, `user_id`, `action`, `file_id`, `disk_id`, `result`, `error_code`. File contents, passwords, and encryption keys are not logged.
 
-## Структура проекта
+## Project structure
 
-- `backend/` — FastAPI-приложение
-- `frontend/` — React-приложение
-- `storage/disk1/` — монтируемый диск хранилища
-- `.env.example` — шаблон переменных окружения
-
-Подробнее: `ТЗ_v1.1_Сетевое_Хранилище.md`, план разработки: `План_разработки_HomeCloud.md`.
+- `backend/` — FastAPI application
+- `frontend/` — React application
+- `storage/disk1/` — mountable storage disk
+- `.env.example` — environment variable template

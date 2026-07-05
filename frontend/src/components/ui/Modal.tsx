@@ -42,7 +42,7 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
       <button
         type="button"
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        aria-label="Закрыть"
+        aria-label="Close"
         onClick={onClose}
       />
       <div className="relative z-10 w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">

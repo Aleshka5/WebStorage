@@ -193,3 +193,8 @@ app.include_router(private_router)
 @app.get("/")
 async def root() -> dict[str, str]:
     return {"status": "ok", "version": "1.0"}
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
