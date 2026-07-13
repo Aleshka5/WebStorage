@@ -18,6 +18,7 @@ interface FileItemProps {
   onDownload: (item: FileNode) => Promise<void>;
   onRename: (item: FileNode, newName: string) => Promise<void>;
   onDeleteRequest: (item: FileNode) => void;
+  onDownloadFolder: (item: FileNode) => Promise<void>;
 }
 
 export function FileItem({
@@ -25,6 +26,7 @@ export function FileItem({
   showUploader = false,
   onOpenFolder,
   onDownload,
+  onDownloadFolder,
   onRename,
   onDeleteRequest,
 }: FileItemProps) {
@@ -115,6 +117,19 @@ export function FileItem({
     }
   };
 
+  const handleDownloadFolder = async () => {
+    setIsBusy(true);
+    setActionError(undefined);
+
+    try {
+      await onDownloadFolder(item);
+    } catch {
+      setActionError("Не удалось скачать папку");
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   return (
     <tr
       className="border-b border-zinc-800/80 transition-colors hover:bg-zinc-800/40"
@@ -175,7 +190,19 @@ export function FileItem({
         </td>
         <td className="px-3 py-3">
           <div className="flex items-center justify-end gap-1">
-            {!item.is_dir && (
+            {item.is_dir ? (
+              <button
+                type="button"
+                title="Скачать архивом"
+                disabled={isBusy}
+                onClick={() => {
+                  void handleDownloadFolder();
+                }}
+                className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-50"
+              >
+                <Download className="h-4 w-4" />
+              </button>
+            ) : (
               <button
                 type="button"
                 title="Скачать"

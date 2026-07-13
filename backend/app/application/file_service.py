@@ -1,9 +1,13 @@
 import asyncio
+import io
 import mimetypes
 from collections.abc import AsyncIterator
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
+import aiofiles
+import aiofiles.os
+import zipfile
 from loguru import logger
 
 from app.application.archived_file_reader import (
@@ -23,6 +27,7 @@ from app.infrastructure.storage.encrypted_adapter import EncryptedStorageAdapter
 
 DEFAULT_MIME_TYPE = "application/octet-stream"
 TMP_DIR = ".tmp"
+READ_CHUNK = 64 * 1024
 
 
 class FileService:
@@ -219,6 +224,121 @@ class FileService:
 
         logger.info("Renamed file {} to {} for user {}", file_id, new_name, actor_id)
         return updated
+
+    async def download_directory_as_zip(
+        self, actor_id: UUID, path: str
+    ) -> AsyncIterator[bytes]:
+        normalized = self._normalize_path(path)
+        await self._ensure_can_download_directory(actor_id, normalized)
+        logger.info("Starting directory zip for user {} at path {}", actor_id, path)
+
+        # Recursively collect (storage_path, arcname) for every entry
+        entries = await self._walk_directory(normalized, normalized, set())
+
+        # Build ZIP in memory via BytesIO, then stream out in chunks
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for entry_path, arcname in entries:
+                if arcname.endswith("/"):
+                    zf.writestr(arcname, b"")
+                else:
+                    data = await self._collect_file(entry_path)
+                    zf.writestr(arcname, data)
+
+        buf.seek(0)
+        while True:
+            chunk = buf.read(READ_CHUNK)
+            if not chunk:
+                break
+            yield chunk
+
+        logger.info(
+            "Directory zip completed for user {} at path {} ({} entries)",
+            actor_id,
+            path,
+            len(entries),
+        )
+
+    async def _walk_directory(
+        self,
+        root: str,
+        current: str,
+        visited: set[str],
+    ) -> list[tuple[str, str]]:
+        """Recursively walk the storage directory tree.
+
+        Returns a list of (storage_path, zip_arcname) tuples.
+        """
+        result: list[tuple[str, str]] = []
+        # Avoid symlinks / cycles
+        normalized = self._normalize_path(current)
+        if normalized in visited:
+            logger.warning("Skipping cyclic directory {} during zip", normalized)
+            return result
+        visited.add(normalized)
+
+        try:
+            nodes = await self._adapter.list(normalized)
+        except FileNotFoundError:
+            return result
+
+        for node in nodes:
+            storage_path = self._join_path(normalized, node.name)
+            arcname = self._arcname_from(storage_path, root, node.name)
+            if node.is_dir:
+                arcname_with_slash = arcname.rstrip("/") + "/"
+                result.append((storage_path, arcname_with_slash))
+                # Recurse into subdirectory
+                result.extend(
+                    await self._walk_directory(root, storage_path, visited)
+                )
+            else:
+                result.append((storage_path, arcname))
+
+        return result
+
+    async def _collect_file(self, path: str) -> bytes:
+        """Read entire file content from storage into memory."""
+        buf = io.BytesIO()
+        async for chunk in self._read_bytes(path):
+            buf.write(chunk)
+        return buf.getvalue()
+
+    async def _read_bytes(self, path: str) -> AsyncIterator[bytes]:
+        """Read bytes from storage adapter."""
+        async for chunk in self._adapter.read(path):  # type: ignore[misc]
+            yield chunk
+
+    @staticmethod
+    def _arcname_from(storage_path: str, root: str, filename: str) -> str:
+        """Build a ZIP arcname relative to the download root.
+
+        storage_path = /base/level1/level2/filename
+        root         = /base/level1
+        returns      = level2/filename
+        """
+        # Strip the root prefix and leading slash
+        relative = storage_path[len(root):].lstrip("/")
+        if not relative:
+            return filename
+        return relative
+
+    @staticmethod
+    def _clean_arcname(name: str) -> str:
+        return name.strip().replace("\\", "/")
+
+    async def _ensure_can_download_directory(self, actor_id: UUID, path: str) -> None:
+        normalized = self._normalize_path(path)
+
+        if not await self._adapter.exists(normalized):
+            raise FileNotFoundError(f"Path {path!r} not found")
+
+        is_dir = await self._is_directory(normalized)
+        if not is_dir:
+            raise FileNotFoundError(f"Path {path!r} is not a directory")
+
+        if self._section != FileSection.SHARED:
+            await self._get_record_by_section_path(actor_id, normalized, self._section)
 
     async def read_by_path(self, actor_id: UUID, path: str) -> AsyncIterator[bytes]:
         normalized = self._normalize_path(path)

@@ -64,3 +64,21 @@ export async function renameEntry(
 ): Promise<void> {
   await api.patch(`${apiPrefix}/rename`, { path, new_name: newName });
 }
+
+export async function downloadFolder(
+  apiPrefix: string,
+  path: string,
+  folderName: string,
+): Promise<void> {
+  const response = await api.get(`${apiPrefix}/download-folder`, {
+    params: { path },
+    responseType: "blob",
+  });
+
+  const url = window.URL.createObjectURL(response.data);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${folderName}.zip`;
+  link.click();
+  window.URL.revokeObjectURL(url);
+}

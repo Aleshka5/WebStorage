@@ -12,6 +12,7 @@ import {
   createDirectory,
   deleteFile,
   downloadFile,
+  downloadFolder,
   listFiles,
   renameEntry,
 } from "../../services/filesApi";
@@ -171,6 +172,10 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
     await downloadFile(apiPrefix, item.path, item.name);
   };
 
+  const handleDownloadFolder = async (item: FileNode) => {
+    await downloadFolder(apiPrefix, item.path, item.name);
+  };
+
   const handleRename = async (item: FileNode, newName: string) => {
     await renameEntry(apiPrefix, item.path, newName);
     await refreshDirectory();
@@ -325,6 +330,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
           onSortChange={handleSortChange}
           onOpenFolder={setCurrentPath}
           onDownload={handleDownload}
+          onDownloadFolder={handleDownloadFolder}
           onRename={handleRename}
           onDeleteRequest={setItemToDelete}
         />

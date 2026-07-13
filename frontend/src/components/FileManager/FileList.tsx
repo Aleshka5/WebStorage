@@ -11,6 +11,7 @@ interface FileListProps {
   onSortChange: (field: SortField) => void;
   onOpenFolder: (path: string) => void;
   onDownload: (item: FileNode) => Promise<void>;
+  onDownloadFolder: (item: FileNode) => Promise<void>;
   onRename: (item: FileNode, newName: string) => Promise<void>;
   onDeleteRequest: (item: FileNode) => void;
 }
@@ -73,6 +74,7 @@ export function FileList({
   onSortChange,
   onOpenFolder,
   onDownload,
+  onDownloadFolder,
   onRename,
   onDeleteRequest,
 }: FileListProps) {
@@ -131,6 +133,7 @@ export function FileList({
                 showUploader={showUploader}
                 onOpenFolder={onOpenFolder}
                 onDownload={onDownload}
+                onDownloadFolder={onDownloadFolder}
                 onRename={onRename}
                 onDeleteRequest={onDeleteRequest}
               />

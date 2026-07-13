@@ -431,3 +431,22 @@ async def search_private_files(
             "message": SEARCH_NOT_IMPLEMENTED_MESSAGE,
         },
     )
+
+
+@router.get("/download-folder", response_class=StreamingResponse)
+async def download_private_folder(
+    path: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    file_service: FileService = Depends(get_private_file_service),
+) -> StreamingResponse:
+    normalized = _normalize_api_path(path)
+    folder_name = PurePosixPath(normalized).name or "folder"
+    logger.info("Private download-folder requested for user {} path {}", current_user.id, path)
+
+    stream = file_service.download_directory_as_zip(current_user.id, normalized)
+
+    return StreamingResponse(
+        stream,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{folder_name}.zip"'},
+    )

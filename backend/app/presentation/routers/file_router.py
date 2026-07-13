@@ -200,6 +200,31 @@ async def download_file(
     )
 
 
+@router.get("/download-folder", response_class=StreamingResponse)
+async def download_folder(
+    path: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    file_service: FileService = Depends(get_file_service),
+) -> StreamingResponse:
+    normalized = _normalize_api_path(path)
+    dir_name = PurePosixPath(normalized).name or "folder"
+    logger.info(
+        "Download folder requested for user {} path {}",
+        current_user.id,
+        path,
+    )
+
+    stream = file_service.download_directory_as_zip(current_user.id, normalized)
+
+    return StreamingResponse(
+        stream,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": build_attachment_content_disposition(f"{dir_name}.zip")
+        },
+    )
+
+
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_file(
     path: str = Query(...),
@@ -412,6 +437,31 @@ async def download_shared_file(
         stream,
         media_type=media_type,
         headers={"Content-Disposition": build_attachment_content_disposition(filename)},
+    )
+
+
+@shared_router.get("/download-folder", response_class=StreamingResponse)
+async def download_shared_folder(
+    path: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    file_service: FileService = Depends(get_shared_file_service),
+) -> StreamingResponse:
+    normalized = _normalize_api_path(path)
+    dir_name = PurePosixPath(normalized).name or "folder"
+    logger.info(
+        "Shared download folder requested for user {} path {}",
+        current_user.id,
+        path,
+    )
+
+    stream = file_service.download_directory_as_zip(current_user.id, normalized)
+
+    return StreamingResponse(
+        stream,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": build_attachment_content_disposition(f"{dir_name}.zip")
+        },
     )
 
 
