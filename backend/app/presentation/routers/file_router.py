@@ -27,6 +27,7 @@ from app.presentation.schemas.files import (
     FileRecordResponse,
     MkdirRequest,
     RenameRequest,
+    ZipUploadResponse,
 )
 from config import Settings, get_settings
 
@@ -175,6 +176,139 @@ async def upload_file(
 
     logger.info("Upload completed for user {} file {}", current_user.id, record.id)
     return _file_record_response(record)
+
+
+@router.post("/upload-zip", response_model=ZipUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_zip_folder(
+    path: str = Query(default="/"),
+    zip_file: UploadFile = File(..., alias="file"),
+    current_user: User = Depends(get_current_user),
+    file_service: FileService = Depends(get_file_service),
+    quota_repo: QuotaRepository = Depends(get_quota_repository),
+    session: AsyncSession = Depends(get_async_session),
+) -> ZipUploadResponse:
+    if not zip_file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.UNSUPPORTED_FORMAT,
+                "message": "Uploaded file must have a filename",
+            },
+        )
+
+    filename = PurePosixPath(zip_file.filename).name
+    if not filename or filename in (".", ".."):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.PATH_TRAVERSAL_DETECTED,
+                "message": "Invalid filename",
+            },
+        )
+
+    if not filename.lower().endswith(".zip"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.UNSUPPORTED_FORMAT,
+                "message": "Only .zip files are supported for folder upload",
+            },
+        )
+
+    normalized = _normalize_api_path(path)
+    zip_bytes = await zip_file.read()
+
+    # Validate ZIP structure to compute total uncompressed size
+    import zipfile as zf_module
+    import io as io_module
+
+    try:
+        with zf_module.ZipFile(io_module.BytesIO(zip_bytes), "r") as zf:
+            zip_info = zf.infolist()
+            if not zip_info:
+                raise ValueError("ZIP archive is empty")
+            # Validate all entries (ZIP slip prevention)
+            from pathlib import PurePosixPath as _pp
+            for info in zip_info:
+                raw = info.filename.replace("\\", "/")
+                if raw.startswith("/"):
+                    raise ValueError(f"Absolute path in ZIP: {info.filename}")
+                parts = _pp(raw).parts
+                if ".." in parts:
+                    raise ValueError(f"Path traversal in ZIP: {info.filename}")
+            total_uncompressed = sum(i.file_size for i in zip_info)
+    except zf_module.BadZipFile:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.UNSUPPORTED_FORMAT,
+                "message": "Uploaded file is not a valid ZIP archive",
+            },
+        )
+
+    logger.info(
+        "ZIP folder upload requested for user {} at path {} (zip_size={}, uncompressed={})",
+        current_user.id,
+        path,
+        len(zip_bytes),
+        total_uncompressed,
+    )
+
+    try:
+        await _ensure_upload_quota(
+            current_user.id,
+            current_user.role,
+            total_uncompressed,
+            quota_repo,
+            get_settings(),
+        )
+        usage = await quota_repo.get_by_user_id(current_user.id)
+        limit_bytes = _resolve_limit_bytes(current_user.role, get_settings())
+        available = max(0, limit_bytes - usage.total_bytes)
+
+        result = await file_service.upload_zip_folder(
+            user_id=current_user.id,
+            path=normalized,
+            zip_filename=filename,
+            zip_data=zip_bytes,
+            total_uncompressed_bytes=total_uncompressed,
+            available_bytes=available,
+        )
+        await session.commit()
+    except QuotaExceededError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "error_code": ErrorCode.QUOTA_EXCEEDED,
+                "message": str(exc),
+                "available_bytes": exc.available_bytes,
+            },
+        )
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.UNSUPPORTED_FORMAT,
+                "message": str(exc),
+            },
+        )
+    except Exception:
+        await session.rollback()
+        raise
+
+    logger.info(
+        "ZIP folder upload completed for user {}: {} files, {} dirs",
+        current_user.id,
+        result["files"],
+        result["dirs"],
+    )
+    return ZipUploadResponse(
+        files=result["files"],
+        dirs=result["dirs"],
+        total_bytes=result["total_bytes"],
+    )
 
 
 @router.get("/download")
@@ -415,6 +549,139 @@ async def upload_shared_file(
 
     logger.info("Shared upload completed for user {} file {}", current_user.id, record.id)
     return _file_record_response(record)
+
+
+@shared_router.post("/upload-zip", response_model=ZipUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_shared_zip_folder(
+    path: str = Query(default="/"),
+    zip_file: UploadFile = File(..., alias="file"),
+    current_user: User = Depends(get_current_user),
+    file_service: FileService = Depends(get_shared_file_service),
+    quota_repo: QuotaRepository = Depends(get_quota_repository),
+    session: AsyncSession = Depends(get_async_session),
+) -> ZipUploadResponse:
+    if not zip_file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.UNSUPPORTED_FORMAT,
+                "message": "Uploaded file must have a filename",
+            },
+        )
+
+    filename = PurePosixPath(zip_file.filename).name
+    if not filename or filename in (".", ".."):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.PATH_TRAVERSAL_DETECTED,
+                "message": "Invalid filename",
+            },
+        )
+
+    if not filename.lower().endswith(".zip"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.UNSUPPORTED_FORMAT,
+                "message": "Only .zip files are supported for folder upload",
+            },
+        )
+
+    normalized = _normalize_api_path(path)
+    zip_bytes = await zip_file.read()
+
+    # Validate ZIP structure to compute total uncompressed size
+    import zipfile as zf_module
+    import io as io_module
+
+    try:
+        with zf_module.ZipFile(io_module.BytesIO(zip_bytes), "r") as zf:
+            zip_info = zf.infolist()
+            if not zip_info:
+                raise ValueError("ZIP archive is empty")
+            from pathlib import PurePosixPath as _pp
+
+            for info in zip_info:
+                raw = info.filename.replace("\\", "/")
+                if raw.startswith("/"):
+                    raise ValueError(f"Absolute path in ZIP: {info.filename}")
+                parts = _pp(raw).parts
+                if ".." in parts:
+                    raise ValueError(f"Path traversal in ZIP: {info.filename}")
+            total_uncompressed = sum(i.file_size for i in zip_info)
+    except zf_module.BadZipFile:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.UNSUPPORTED_FORMAT,
+                "message": "Uploaded file is not a valid ZIP archive",
+            },
+        )
+
+    logger.info(
+        "Shared ZIP folder upload requested for user {} at path {} (zip_size={}, uncompressed={})",
+        current_user.id,
+        path,
+        len(zip_bytes),
+        total_uncompressed,
+    )
+
+    try:
+        await _ensure_upload_quota(
+            current_user.id,
+            current_user.role,
+            total_uncompressed,
+            quota_repo,
+            get_settings(),
+        )
+        usage = await quota_repo.get_by_user_id(current_user.id)
+        limit_bytes = _resolve_limit_bytes(current_user.role, get_settings())
+        available = max(0, limit_bytes - usage.total_bytes)
+
+        result = await file_service.upload_zip_folder(
+            user_id=current_user.id,
+            path=normalized,
+            zip_filename=filename,
+            zip_data=zip_bytes,
+            total_uncompressed_bytes=total_uncompressed,
+            available_bytes=available,
+        )
+        await session.commit()
+    except QuotaExceededError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "error_code": ErrorCode.QUOTA_EXCEEDED,
+                "message": str(exc),
+                "available_bytes": exc.available_bytes,
+            },
+        )
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": ErrorCode.UNSUPPORTED_FORMAT,
+                "message": str(exc),
+            },
+        )
+    except Exception:
+        await session.rollback()
+        raise
+
+    logger.info(
+        "Shared ZIP folder upload completed for user {}: {} files, {} dirs",
+        current_user.id,
+        result["files"],
+        result["dirs"],
+    )
+    return ZipUploadResponse(
+        files=result["files"],
+        dirs=result["dirs"],
+        total_bytes=result["total_bytes"],
+    )
 
 
 @shared_router.get("/download")

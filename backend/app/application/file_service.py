@@ -1,13 +1,13 @@
 import asyncio
 import io
 import mimetypes
+import zipfile
 from collections.abc import AsyncIterator
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
 import aiofiles
 import aiofiles.os
-import zipfile
 from loguru import logger
 
 from app.application.archived_file_reader import (
@@ -16,7 +16,7 @@ from app.application.archived_file_reader import (
 )
 from app.application.archive_service import ARCHIVE_EXTENSION
 from app.domain.entities.file_record import FileRecord, FileSection, FileStatus
-from app.domain.exceptions import AccessDeniedError, FileNotFoundError
+from app.domain.exceptions import AccessDeniedError, FileNotFoundError, QuotaExceededError
 from app.domain.value_objects.role import Role
 from app.infrastructure.archive_manager import ArchiveManager
 from app.infrastructure.database.repositories.file_repo import FileRepository
@@ -201,6 +201,182 @@ class FileService:
         dir_path = self._join_path(self._normalize_path(path), name)
         logger.info("Creating directory {} for user {}", dir_path, user_id)
         await self._adapter.mkdir(dir_path)
+
+    async def upload_zip_folder(
+        self,
+        user_id: UUID,
+        path: str,
+        zip_filename: str,
+        zip_data: bytes,
+        total_uncompressed_bytes: int,
+        available_bytes: int,
+    ) -> dict:
+        """Extract an uploaded ZIP archive into the target directory.
+
+        Validates ZIP entry paths (ZIP slip prevention), pre-checks quota against
+        the sum of all uncompressed entry sizes, then writes files and creates DB
+        records. Existing files with the same name are overwritten.
+        Returns stats: {"files": int, "dirs": int, "total_bytes": int}.
+        """
+        normalized_path = self._normalize_path(path)
+        logger.info(
+            "Starting ZIP folder upload for user {} to path {} (uncompressed={})",
+            user_id,
+            path,
+            total_uncompressed_bytes,
+        )
+
+        # --- Quota pre-check ---
+        if total_uncompressed_bytes > available_bytes:
+            raise QuotaExceededError(
+                f"ZIP uncompressed size {total_uncompressed_bytes} bytes "
+                f"exceeds available quota ({available_bytes} bytes remaining)",
+                available_bytes=available_bytes,
+            )
+
+        # --- Open and validate ZIP ---
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(zip_data), "r")
+        except zipfile.BadZipFile:
+            raise ValueError("Uploaded file is not a valid ZIP archive")
+
+        entries = zf.infolist()
+        if not entries:
+            zf.close()
+            raise ValueError("ZIP archive is empty")
+
+        # Create a new directory named after the ZIP file (without .zip extension)
+        # so contents are not dumped into the current open folder
+        archive_name = PurePosixPath(zip_filename).stem  # strip .zip
+        target_root = self._join_path(normalized_path, archive_name)
+        effective_paths: list[tuple[str, str, zipfile.ZipInfo]] = []  # (section_path, arcname, info)
+        for info in entries:
+            raw_name = info.filename
+            if raw_name.startswith("/") or raw_name.startswith("\\"):
+                zf.close()
+                raise ValueError(f"ZIP entry has an absolute path: {raw_name}")
+
+            clean = raw_name.replace("\\", "/")
+            parts = PurePosixPath(clean).parts
+            if ".." in parts:
+                zf.close()
+                raise ValueError(f"ZIP entry escapes target directory: {raw_name}")
+
+            # Resolve the entry relative to target_root
+            if info.is_dir():
+                entry_section_path = self._join_path(target_root, clean.rstrip("/"))
+            else:
+                entry_section_path = self._join_path(target_root, clean)
+                # Normalize (e.g. dir//file -> dir/file)
+                entry_section_path = self._normalize_path(entry_section_path)
+
+            effective_paths.append((entry_section_path, clean, info))
+
+        zf.close()
+
+        # --- Create directories ---
+        created_dirs: set[str] = set()
+        # Create the archive root directory first so contents are not dumped
+        # into the current open folder
+        await self._adapter.mkdir(target_root)
+        created_dirs.add(target_root)
+        for section_path, arcname, info in effective_paths:
+            if info.is_dir():
+                if section_path not in created_dirs:
+                    await self._adapter.mkdir(section_path)
+                    created_dirs.add(section_path)
+
+        # --- Write files and create records ---
+        files_written = 0
+        total_written_bytes = 0
+        error_count = 0
+
+        with zipfile.ZipFile(io.BytesIO(zip_data), "r") as zf:
+            for section_path, arcname, info in effective_paths:
+                if info.is_dir():
+                    continue
+
+                # Ensure parent directory exists
+                parent = str(PurePosixPath(section_path).parent)
+                parent = "" if parent in (".", "") else parent
+                if parent and parent not in created_dirs:
+                    try:
+                        await self._adapter.mkdir(parent)
+                        created_dirs.add(parent)
+                    except FileExistsError:
+                        pass
+
+                try:
+                    file_data = zf.read(info)
+                    file_size = len(file_data)
+                    mime_type = mimetypes.guess_type(arcname)[0] or DEFAULT_MIME_TYPE
+                    disk_relative_path = self._adapter.to_disk_relative_path(section_path)
+
+                    # Use only the filename part, not the full arcname path
+                    # so that deletion and listing can match by original_name
+                    file_basename = PurePosixPath(arcname).name
+                    record = await self._file_repo.create(
+                        user_id=user_id,
+                        disk_id=self._adapter.disk_id,
+                        relative_path=disk_relative_path,
+                        original_name=file_basename,
+                        size_bytes=file_size,
+                        mime_type=mime_type,
+                        is_encrypted=self._section == FileSection.PRIVATE,
+                        section=self._section,
+                        status=FileStatus.PENDING,
+                    )
+
+                    tmp_path = self._join_path(TMP_DIR, str(record.id))
+                    checksum = await self._adapter.write(tmp_path, self._iter_bytes(file_data), file_size)
+                    await self._adapter.rename(tmp_path, section_path)
+                    committed = await self._file_repo.update_status(
+                        record.id,
+                        FileStatus.COMMITTED,
+                        checksum_sha256=checksum,
+                        relative_path=self._adapter.to_disk_relative_path(section_path),
+                    )
+                    if committed is None:
+                        logger.error("File record {} disappeared after ZIP extract", record.id)
+                        await self._file_repo.delete(record.id)
+                        error_count += 1
+                        continue
+
+                    await self._quota_repo.increment(user_id, file_size, self._section)
+                    files_written += 1
+                    total_written_bytes += file_size
+                    logger.info(
+                        "ZIP extracted file {} ({} bytes, checksum={})",
+                        record.id,
+                        file_size,
+                        checksum,
+                    )
+                except Exception:
+                    error_count += 1
+                    logger.exception(
+                        "Failed to extract ZIP entry {} to path {}",
+                        arcname,
+                        section_path,
+                    )
+
+        stats = {
+            "files": files_written,
+            "dirs": len(created_dirs),
+            "total_bytes": total_written_bytes,
+        }
+        logger.info(
+            "ZIP folder upload completed for user {}: {} files, {} dirs, {} bytes, {} errors",
+            user_id,
+            files_written,
+            len(created_dirs),
+            total_written_bytes,
+            error_count,
+        )
+        return stats
+
+    async def _iter_bytes(self, data: bytes) -> AsyncIterator[bytes]:
+        """Yield bytes from a static payload."""
+        yield data
 
     async def rename(self, actor_id: UUID, file_id: UUID, new_name: str) -> FileRecord:
         record = await self._get_downloadable_record(file_id, actor_id)

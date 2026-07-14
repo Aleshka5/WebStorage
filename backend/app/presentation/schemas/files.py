@@ -44,3 +44,9 @@ class MkdirRequest(BaseModel):
 class RenameRequest(BaseModel):
     path: str
     new_name: str = Field(min_length=1)
+
+
+class ZipUploadResponse(BaseModel):
+    files: int = Field(ge=0)
+    dirs: int = Field(ge=0)
+    total_bytes: int = Field(ge=0)

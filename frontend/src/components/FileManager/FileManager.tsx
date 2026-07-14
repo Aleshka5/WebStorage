@@ -2,6 +2,7 @@ import {
   ChevronRight,
   FolderPlus,
   Lock,
+  Package,
   Upload,
   X,
 } from "lucide-react";
@@ -15,6 +16,7 @@ import {
   downloadFolder,
   listFiles,
   renameEntry,
+  uploadZipFolder,
 } from "../../services/filesApi";
 import { useQuotaStore } from "../../store/quota";
 import type { FileManagerMode, FileNode, SortDirection, SortField } from "../../types/files";
@@ -88,7 +90,17 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<FileNode | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isUploadingZip, setIsUploadingZip] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const zipFileInputRef = useRef<HTMLInputElement>(null);
+  const [zipUploadProgress, setZipUploadProgress] = useState<{
+    name: string;
+    progress: number;
+    status: "uploading" | "done" | "error";
+    files?: number;
+    dirs?: number;
+    error?: string;
+  } | null>(null);
 
   const { uploads, uploadFiles, clearFinished } = useFileUpload(apiPrefix);
   const fetchQuota = useQuotaStore((state) => state.fetchQuota);
@@ -155,6 +167,71 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
 
   const handleUpload = async (files: File[]) => {
     await uploadFiles(files, currentPath);
+  };
+
+  const handleZipUpload = async (zipFile: File) => {
+    setIsUploadingZip(true);
+    setZipUploadProgress({
+      name: zipFile.name,
+      progress: 0,
+      status: "uploading",
+    });
+
+    try {
+      const result = await uploadZipFolder(
+        apiPrefix,
+        currentPath,
+        zipFile,
+        (progress) => {
+          setZipUploadProgress((prev) =>
+            prev ? { ...prev, progress } : null,
+          );
+        },
+      );
+
+      setZipUploadProgress((prev) =>
+        prev
+          ? {
+              ...prev,
+              progress: 100,
+              status: "done",
+              files: result.files,
+              dirs: result.dirs,
+            }
+          : null,
+      );
+
+      void refreshDirectory();
+      void fetchQuota();
+
+      setTimeout(() => {
+        setZipUploadProgress(null);
+        setIsUploadingZip(false);
+      }, 3000);
+    } catch (error) {
+      const detail = getApiErrorDetail(error);
+      setZipUploadProgress((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "error",
+              error: detail?.message ?? "Ошибка загрузки",
+            }
+          : null,
+      );
+      showErrorToast(error);
+
+      setTimeout(() => {
+        setZipUploadProgress(null);
+        setIsUploadingZip(false);
+      }, 5000);
+    }
+  };
+
+  const handleZipDrop = async (zipFiles: File[]) => {
+    for (const zipFile of zipFiles) {
+      await handleZipUpload(zipFile);
+    }
   };
 
   const handleCreateFolder = async (name: string) => {
@@ -244,11 +321,22 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
             className="hidden"
             onChange={(event) => {
               const selectedFiles = Array.from(event.target.files ?? []);
-
               if (selectedFiles.length > 0) {
                 void handleUpload(selectedFiles);
               }
-
+              event.target.value = "";
+            }}
+          />
+          <input
+            ref={zipFileInputRef}
+            type="file"
+            accept=".zip"
+            className="hidden"
+            onChange={(event) => {
+              const selectedFile = event.target.files?.[0];
+              if (selectedFile) {
+                void handleZipUpload(selectedFile);
+              }
               event.target.value = "";
             }}
           />
@@ -261,6 +349,18 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
             <span className="inline-flex items-center gap-2">
               <Upload className="h-4 w-4" />
               Загрузить
+            </span>
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="w-auto px-3"
+            onClick={() => zipFileInputRef.current?.click()}
+            disabled={isUploadingZip}
+          >
+            <span className="inline-flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Загрузить папку
             </span>
           </Button>
           <Button
@@ -320,7 +420,53 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
         </div>
       )}
 
-      <DropZone onDrop={(files) => void handleUpload(files)} disabled={isLoading}>
+      {zipUploadProgress && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-medium text-zinc-200">Загрузка папки</p>
+            {zipUploadProgress.status === "done" && (
+              <button
+                type="button"
+                onClick={() => setZipUploadProgress(null)}
+                className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                aria-label="Скрыть"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="truncate text-zinc-300">{zipUploadProgress.name}</span>
+            <span className="shrink-0 text-xs text-zinc-500">
+              {zipUploadProgress.status === "uploading" && `${zipUploadProgress.progress}%`}
+              {zipUploadProgress.status === "done" && "Готово"}
+              {zipUploadProgress.status === "error" && "Ошибка"}
+            </span>
+          </div>
+          {zipUploadProgress.status === "uploading" && (
+            <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+              <div
+                className="h-full rounded-full bg-sky-500 transition-all"
+                style={{ width: `${zipUploadProgress.progress}%` }}
+              />
+            </div>
+          )}
+          {zipUploadProgress.status === "done" && zipUploadProgress.files !== undefined && (
+            <p className="mt-2 text-xs text-zinc-400">
+              Размещено {zipUploadProgress.files} файлов в {zipUploadProgress.dirs} папок
+            </p>
+          )}
+          {zipUploadProgress.status === "error" && zipUploadProgress.error && (
+            <ErrorMessage errorCode={zipUploadProgress.error} className="text-xs" />
+          )}
+        </div>
+      )}
+
+      <DropZone
+        onDrop={(files) => void handleUpload(files)}
+        onDropZip={(zipFiles) => void handleZipDrop(zipFiles)}
+        disabled={isLoading}
+      >
         <FileList
           items={sortedItems}
           isLoading={isLoading}

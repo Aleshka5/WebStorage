@@ -82,3 +82,26 @@ export async function downloadFolder(
   link.click();
   window.URL.revokeObjectURL(url);
 }
+
+export async function uploadZipFolder(
+  apiPrefix: string,
+  path: string,
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<{ files: number; dirs: number; total_bytes: number }> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await api.post(`${apiPrefix}/upload-zip`, formData, {
+    params: { path },
+    headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (event) => {
+      if (!onProgress || !event.total) {
+        return;
+      }
+      onProgress(Math.round((event.loaded * 100) / event.total));
+    },
+  });
+
+  return response.data;
+}

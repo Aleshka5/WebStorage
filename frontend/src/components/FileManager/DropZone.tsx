@@ -2,11 +2,12 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "rea
 
 interface DropZoneProps {
   onDrop: (files: File[]) => void;
+  onDropZip?: (zipFiles: File[]) => void;
   disabled?: boolean;
   children: ReactNode;
 }
 
-export function DropZone({ onDrop, disabled = false, children }: DropZoneProps) {
+export function DropZone({ onDrop, onDropZip, disabled = false, children }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
 
@@ -52,7 +53,18 @@ export function DropZone({ onDrop, disabled = false, children }: DropZoneProps) 
 
     const droppedFiles = Array.from(event.dataTransfer.files);
 
-    if (droppedFiles.length > 0) {
+    if (droppedFiles.length === 0) {
+      return;
+    }
+
+    // Check if all dropped files are .zip files
+    const zipFiles = droppedFiles.filter(
+      (f) => f.name.toLowerCase().endsWith(".zip"),
+    );
+
+    if (zipFiles.length > 0 && onDropZip) {
+      onDropZip(zipFiles);
+    } else if (droppedFiles.length > 0) {
       onDrop(droppedFiles);
     }
   };

@@ -68,6 +68,10 @@ class EncryptedStorageAdapter(StorageAdapter):
     def disk_relative_prefix(self) -> str:
         return self._inner.disk_relative_prefix
 
+    async def encrypt_path(self, path: str) -> str:
+        """Encrypt a section path for storage."""
+        return await self._to_encrypted_path(path)
+
     def encrypt_name(self, name: str) -> str:
         iv = os.urandom(IV_SIZE)
         ciphertext = AESGCM(self._key).encrypt(iv, name.encode(), None)

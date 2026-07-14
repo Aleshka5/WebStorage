@@ -90,3 +90,10 @@ class StorageAdapter(ABC):
         if not normalized:
             return self.disk_relative_prefix
         return f"{self.disk_relative_prefix}/{normalized}"
+
+    async def encrypt_path(self, path: str) -> str:
+        """Encrypt a section path for storage.
+
+        Default: identity (plain storage). Override in EncryptedStorageAdapter.
+        """
+        return path
