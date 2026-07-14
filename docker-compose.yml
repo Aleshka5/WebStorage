@@ -9,8 +9,7 @@ services:
       - .env
     volumes:
       - ./backend:/app
-      - /home/aleksey/storage:/storage/disk1
-      - /run/media/aleksey/HardDisk/storage:/storage/disk2
+      - /run/media/aleksey/HardDisk/storage:/storage/disk1
     depends_on:
       db:
         condition: service_healthy

@@ -1,17 +1,12 @@
 apiVersion: v1
-kind: Secret
+kind: ConfigMap
 metadata:
-  name: app-env
-type: Opaque
-stringData:
-  POSTGRES_USER: postgres_admin
-  POSTGRES_PASSWORD: ...
+  name: app-config
+data:
   POSTGRES_DB: cloud_db
-  DATABASE_URL: postgresql+asyncpg://postgres_admin:...@db:5432/cloud_db
   REDIS_URL: redis://redis:6379
   STORAGE_DISKS: disk1
   STORAGE_ROOT: /storage
-  JWT_SECRET: ...
   SESSION_TTL_SECONDS: "86400"
   PRIVATE_SESSION_TTL_HOURS: "4"
   PHOTO_BATCH_SIZE: "30"
@@ -21,12 +16,13 @@ stringData:
   DISK_STRATEGY: most_free_space
   DISK_SPACE_CACHE_TTL: "30"
   MIN_FREE_SPACE_MB: "500"
-  GOOGLE_CLIENT_ID: ...
-  GOOGLE_CLIENT_SECRET: ...
   GOOGLE_REDIRECT_URI: http://filenkov.store:8000/api/auth/google/callback
   FRONTEND_URL: http://filenkov.store
-  ADMIN_EMAIL: fad80223@gmail.com
-  ADMIN_PASSWORD: ...
+  LOG_LEVEL: INFO
+  LOG_FILE_ENABLED: "false"
+  LOG_FILE_PATH: /var/log/homecloud/app.log
+  LOG_FILE_ROTATION: "100 MB"
+  LOG_FILE_RETENTION: "30 days"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -34,6 +30,31 @@ metadata:
   name: frontend-env
 data:
   API_PROXY_TARGET: http://app:8000
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: hdd-pv
+spec:
+  capacity:
+    storage: 1000Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: hdd
+  hostPath:
+    path: /run/media/aleksey/HardDisk/storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-hdd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: hdd
+  resources:
+    requests:
+      storage: 1000Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -54,7 +75,7 @@ spec:
   accessModes:
     - ReadWriteOnce
   resources:
-    requests: 
+    requests:
       storage: 5Gi
 ---
 apiVersion: apps/v1
@@ -77,14 +98,16 @@ spec:
           ports:
             - containerPort: 5432
           envFrom:
+            - configMapRef:
+                name: app-config
             - secretRef:
-                name: app-env
+                name: app-secrets
           volumeMounts:
             - name: pg-data
               mountPath: /var/lib/postgresql/data
           livenessProbe:
             exec:
-              command: ["pg_isready", "-U", "postgres", "-d", "webstorage"]
+              command: ["pg_isready", "-U", "postgres_admin", "-d", "cloud_db"]
             initialDelaySeconds: 10
             periodSeconds: 5
       volumes:
@@ -143,8 +166,10 @@ spec:
             - name: storage-disk1
               mountPath: /storage/disk1
           envFrom:
+            - configMapRef:
+                name: app-config
             - secretRef:
-                name: app-env
+                name: app-secrets
           startupProbe:
             httpGet:
               path: /health
@@ -159,8 +184,8 @@ spec:
             periodSeconds: 5
       volumes:
         - name: storage-disk1
-          hostPath:
-            path: /run/media/aleksey/HardDisk/storage
+          persistentVolumeClaim:
+            claimName: storage-hdd
 ---
 apiVersion: apps/v1
 kind: Deployment

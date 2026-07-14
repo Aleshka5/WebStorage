@@ -123,6 +123,9 @@ class DiskRouter:
             total_bytes = stat.f_blocks * block_size
             free_bytes = stat.f_bavail * block_size
             used_bytes = total_bytes - free_bytes
+            # FUSE/9p mounts may return zero sizes — fall back to `df`
+            if total_bytes == 0 and free_bytes == 0:
+                return self._probe_disk_space_via_df(mount_path)
             return {
                 "total_bytes": total_bytes,
                 "used_bytes": used_bytes,
@@ -130,4 +133,26 @@ class DiskRouter:
             }
         except OSError:
             logger.warning("Failed to stat disk {} at {}", disk.id, mount_path)
+            return None
+
+    def _probe_disk_space_via_df(self, mount_path: Path) -> dict[str, int] | None:
+        """Fallback: use `df -B1` to get byte-accurate space from FUSE mounts."""
+        try:
+            result = os.popen(f"df -B1 {mount_path}").read().strip().splitlines()
+            if len(result) < 2:
+                return None
+            # Skip header, take last line (handles spaces in mount points)
+            parts = result[-1].split()
+            if len(parts) < 4:
+                return None
+            total = int(parts[1])
+            used = int(parts[2])
+            avail = int(parts[3])
+            return {
+                "total_bytes": total,
+                "used_bytes": used,
+                "free_bytes": avail,
+            }
+        except (OSError, ValueError, IndexError):
+            logger.warning("Failed to get disk space via df for {}", mount_path)
             return None

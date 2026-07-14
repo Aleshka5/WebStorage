@@ -259,3 +259,69 @@ Logs are output in JSON format with fields: `timestamp`, `level`, `user_id`, `ac
 - `frontend/` — React application
 - `storage/disk1/` — mountable storage disk
 - `.env.example` — environment variable template
+
+## Deploying to Kubernetes
+
+### 1. Prepare the environment
+
+Copy the env file and fill in the real values:
+
+```bash
+cp .env.example .env
+# Edit .env — set POSTGRES_PASSWORD, JWT_SECRET, ADMIN_EMAIL/PASSWORD, etc.
+```
+
+### 2. Create the Kubernetes Secret (passwords only)
+
+ConfigMap `app-config` (non-sensitive settings) is already in `deployment.yaml`.
+Secret `app-secrets` (passwords, tokens) is generated from `.env`:
+
+```bash
+chmod +x generate-secret.sh
+./generate-secret.sh .env <namespace>
+```
+
+Or manually:
+
+```bash
+# Only secrets — config goes through ConfigMap in deployment.yaml
+kubectl create secret generic app-secrets \
+  --from-literal=POSTGRES_USER="$(grep '^POSTGRES_USER=' .env | cut -d= -f2-)" \
+  --from-literal=POSTGRES_PASSWORD="$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2-)" \
+  --from-literal=DATABASE_URL="$(grep '^DATABASE_URL=' .env | cut -d= -f2-)" \
+  --from-literal=JWT_SECRET="$(grep '^JWT_SECRET=' .env | cut -d= -f2-)" \
+  --from-literal=ADMIN_EMAIL="$(grep '^ADMIN_EMAIL=' .env | cut -d= -f2-)" \
+  --from-literal=ADMIN_PASSWORD="$(grep '^ADMIN_PASSWORD=' .env | cut -d= -f2-)" \
+  --from-literal=GOOGLE_CLIENT_ID="$(grep '^GOOGLE_CLIENT_ID=' .env | cut -d= -f2-)" \
+  --from-literal=GOOGLE_CLIENT_SECRET="$(grep '^GOOGLE_CLIENT_SECRET=' .env | cut -d= -f2-)" \
+  --dry-run=client -o yaml | kubectl apply -n <namespace> -f -
+```
+
+### 3. Apply the remaining resources
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+`deployment.yaml` contains: `ConfigMap` (non-sensitive settings), PVCs, Deployments, Services.
+The `app` and `db` pods read from both: `configMapRef: app-config` + `secretRef: app-secrets`.
+
+### 4. Build and push images
+
+```bash
+# Replace with your registry
+docker build -t your-registry/webstorage-app:latest -f backend/Dockerfile .
+docker build -t your-registry/webstorage-frontend:latest -f frontend/Dockerfile .
+docker push your-registry/webstorage-app:latest
+docker push your-registry/webstorage-frontend:latest
+
+kubectl rollout restart deployment/app
+kubectl rollout restart deployment/frontend
+```
+
+### 5. Verify
+
+```bash
+kubectl get pods
+kubectl logs -l app=app -f
+```
