@@ -48,12 +48,15 @@ function sortItems(
     let comparison = 0;
 
     if (sortField === "name") {
-      comparison = left.name.localeCompare(right.name, "ru");
+      const leftName = left.name ?? "";
+      const rightName = right.name ?? "";
+      comparison = leftName.localeCompare(rightName, "ru");
     } else if (sortField === "size") {
-      comparison = left.size - right.size;
+      comparison = (left.size ?? 0) - (right.size ?? 0);
     } else {
       comparison =
-        new Date(left.modified_at).getTime() - new Date(right.modified_at).getTime();
+        (new Date(left.modified_at).getTime() ?? 0) -
+        (new Date(right.modified_at).getTime() ?? 0);
     }
 
     return comparison * directionMultiplier;

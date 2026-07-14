@@ -1,4 +1,17 @@
 services:
+  caddy:
+    image: caddy:2.8.4-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+      - frontend
+
   app:
     build:
       context: .
@@ -22,11 +35,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5173:5173"
-    environment:
-      API_PROXY_TARGET: http://app:8000
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+    env_file:
+      - .env
 
   db:
     image: postgres:15
@@ -48,3 +58,5 @@ services:
 volumes:
   pg_data:
   redis_data:
+  caddy_data:
+  caddy_config:
