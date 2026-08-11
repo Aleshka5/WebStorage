@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ENV_FILE="${1:-.env}"
-NAMESPACE="${2:-default}"
+NAMESPACE="${2:-webstorage}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
     echo "❌ .env файл не найден: $ENV_FILE"

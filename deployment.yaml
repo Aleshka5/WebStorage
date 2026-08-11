@@ -42,7 +42,31 @@ spec:
     - ReadWriteOnce
   storageClassName: hdd
   hostPath:
-    path: /run/media/aleksey/HardDisk/storage
+    path: /media/aleksey/HardDisk/k8s/volumes/storage
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pg-data-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /media/aleksey/HardDisk/k8s/volumes/pg-data
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: redis-data-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /media/aleksey/HardDisk/k8s/volumes/redis-data
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -95,6 +119,7 @@ spec:
       containers:
         - name: postgres
           image: postgres:15
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5432
           envFrom:
@@ -132,6 +157,7 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 6379
           volumeMounts:
@@ -158,8 +184,8 @@ spec:
     spec:
       containers:
         - name: app
-          image: webstorage-app:latest
-          imagePullPolicy: Never
+          image: 192.168.1.200:5000/webstorage-app:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
           volumeMounts:
@@ -203,8 +229,8 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: webstorage-frontend:latest
-          imagePullPolicy: Never
+          image: 192.168.1.200:5000/webstorage-frontend:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5173
           envFrom:
@@ -294,7 +320,8 @@ data:
   Caddyfile: |
     filenkov.store {
         reverse_proxy /api/* app:8000
-        reverse_proxy /* frontend:80
+        reverse_proxy /storage/* frontend:80
+        reverse_proxy /storage frontend:80
     }
 ---
 apiVersion: v1
