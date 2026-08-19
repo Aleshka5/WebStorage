@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,11 +23,46 @@ class CacheDBSettings(BaseSettings):
 class StorageSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    backend: Literal["fs", "s3"] = Field(
+        default="fs",
+        validation_alias="STORAGE_BACKEND",
+        description="Blob storage backend selector: 'fs' (local filesystem) or 's3' (MinIO/S3).",
+    )
     disks: str = Field(default="disk1", validation_alias="STORAGE_DISKS")
     root: str = Field(default="/storage", validation_alias="STORAGE_ROOT")
     disk_strategy: str = Field(default="most_free_space", validation_alias="DISK_STRATEGY")
     disk_space_cache_ttl: int = Field(default=30, validation_alias="DISK_SPACE_CACHE_TTL")
     min_free_space_mb: int = Field(default=500, validation_alias="MIN_FREE_SPACE_MB")
+
+
+class S3Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    endpoint_url: str = Field(
+        default="",
+        validation_alias="S3_ENDPOINT_URL",
+        description="S3-compatible API endpoint (e.g. http://minio:9000).",
+    )
+    access_key: str = Field(default="", validation_alias="S3_ACCESS_KEY")
+    secret_key: str = Field(default="", validation_alias="S3_SECRET_KEY")
+    region: str = Field(default="us-east-1", validation_alias="S3_REGION")
+    use_ssl: bool = Field(default=False, validation_alias="S3_USE_SSL")
+    bucket_prefix: str = Field(
+        default="",
+        validation_alias="S3_BUCKET_PREFIX",
+        description=(
+            "Optional prefix for per-disk MinIO buckets, aligned 1:1 with STORAGE_DISKS. "
+            "Bucket for a disk_id is `{prefix}{disk_id}` when prefix is set "
+            "(e.g. prefix 'hc-' + disk 'disk1' → bucket 'hc-disk1'); "
+            "when empty, each STORAGE_DISKS entry is used as the bucket name directly. "
+            "Sticky FileRecord.disk_id placement is preserved — no rebalance across buckets."
+        ),
+    )
+    path_style: bool = Field(
+        default=True,
+        validation_alias="S3_PATH_STYLE",
+        description="Use path-style addressing (required for typical MinIO setups).",
+    )
 
 
 class AuthSettings(BaseSettings):
@@ -78,6 +114,7 @@ class Settings:
         self.database = DatabaseSettings()
         self.cache_db = CacheDBSettings()
         self.storage = StorageSettings()
+        self.s3 = S3Settings()
         self.auth = AuthSettings()
         self.business_logic = BusinessLogicSettings()
         self.admin = AdminSettings()

@@ -1,31 +1,26 @@
-import asyncio
 import base64
-import shutil
-from pathlib import Path
 from uuid import UUID
 
-import aiofiles
 from loguru import logger
 
 from app.application.file_service import FileService
 from app.domain.entities.file_record import FileSection
-from app.domain.exceptions import PrivateSessionExpiredError, StorageUnavailableError
+from app.domain.exceptions import FileNotFoundError, PrivateSessionExpiredError, StorageUnavailableError
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.disk_router import DiskRouter
 from app.infrastructure.session_store import SessionStore
 from app.infrastructure.storage.encrypted_adapter import (
-    MARKER_FILENAME,
-    MARKER_PLAINTEXT,
-    decrypt_blob,
     derive_encryption_key,
-    encrypt_blob,
     EncryptedStorageAdapter,
 )
-from app.infrastructure.storage.plain_adapter import PlainStorageAdapter
 from app.presentation.dependencies.archive_providers import (
     get_archive_disk_router,
     get_archive_manager,
+)
+from app.presentation.dependencies.storage_factory import (
+    build_section_adapter,
+    user_private_root_prefix,
 )
 from config import Settings, get_settings
 
@@ -55,28 +50,29 @@ class PrivateService:
 
         try:
             disk_id = await self._resolve_user_disk_id(user_id)
-            base_path = self._private_base_path(user_id, disk_id)
-            base_path.mkdir(parents=True, exist_ok=True)
-            inner = PlainStorageAdapter(base_path, disk_id=disk_id)
-            marker_path = self._inner_marker_path(inner)
+            root_prefix = user_private_root_prefix(user_id)
+            inner = await build_section_adapter(
+                disk_id,
+                root_prefix,
+                user_id=user_id,
+            )
+            encrypted = EncryptedStorageAdapter(inner=inner, key=key)
 
-            if marker_path.is_file():
-                async with aiofiles.open(marker_path, mode="rb") as marker_file:
-                    encrypted_marker = await marker_file.read()
-                try:
-                    decrypted_marker = decrypt_blob(key, encrypted_marker).decode()
-                except Exception:
-                    logger.warning("Private unlock failed for user {}: invalid passphrase", user_id)
-                    return False
-                if decrypted_marker != MARKER_PLAINTEXT:
-                    logger.warning("Private unlock failed for user {}: marker mismatch", user_id)
+            if await encrypted.marker_exists():
+                if not await encrypted.validate_marker():
+                    logger.warning(
+                        "Private unlock failed for user {}: invalid passphrase or marker",
+                        user_id,
+                    )
                     return False
             else:
-                encrypted_marker = encrypt_blob(key, MARKER_PLAINTEXT.encode())
-                marker_path.parent.mkdir(parents=True, exist_ok=True)
-                async with aiofiles.open(marker_path, mode="wb") as marker_file:
-                    await marker_file.write(encrypted_marker)
-                logger.info("Created private marker file for user {}", user_id)
+                await encrypted.write_marker()
+                logger.info(
+                    "Created private marker for user {} disk_id={} root_prefix={}",
+                    user_id,
+                    disk_id,
+                    root_prefix,
+                )
 
             encoded_key = base64.urlsafe_b64encode(key).decode(_KEY_ENCODING)
             await self._session_store.set_private_key(
@@ -84,7 +80,12 @@ class PrivateService:
                 encoded_key,
                 self.private_session_ttl_seconds,
             )
-            logger.info("Private section unlocked for user {}", user_id)
+            logger.info(
+                "Private section unlocked for user {} disk_id={} root_prefix={}",
+                user_id,
+                disk_id,
+                root_prefix,
+            )
             return True
         except StorageUnavailableError:
             logger.error("Private unlock failed for user {}: storage unavailable", user_id)
@@ -100,12 +101,32 @@ class PrivateService:
         await self._session_store.delete_private_key(session_id)
 
         disk_id = await self._resolve_user_disk_id(user_id)
-        base_path = self._private_base_path(user_id, disk_id)
+        root_prefix = user_private_root_prefix(user_id)
+        inner = await build_section_adapter(
+            disk_id,
+            root_prefix,
+            user_id=user_id,
+        )
 
-        if base_path.exists():
-            await asyncio.to_thread(shutil.rmtree, base_path)
+        try:
+            if await inner.exists(""):
+                await inner.delete("")
+                logger.info(
+                    "Deleted private storage tree for user {} disk_id={} root_prefix={}",
+                    user_id,
+                    disk_id,
+                    root_prefix,
+                )
+        except FileNotFoundError:
+            logger.warning(
+                "Private storage tree already empty for user {} disk_id={} root_prefix={}",
+                user_id,
+                disk_id,
+                root_prefix,
+            )
 
-        base_path.mkdir(parents=True, exist_ok=True)
+        # Re-ensure section root after wipe (fs recreates directory; s3 mkdir("") is fine).
+        await build_section_adapter(disk_id, root_prefix, user_id=user_id)
 
         deleted_records = await self._file_repo.delete_all_by_user_section(
             user_id,
@@ -114,8 +135,9 @@ class PrivateService:
         await self._quota_repo.reset_private_usage(user_id)
 
         logger.info(
-            "Private storage reset completed for user {} ({} file records removed)",
+            "Private storage reset completed for user {} disk_id={} ({} file records removed)",
             user_id,
+            disk_id,
             deleted_records,
         )
 
@@ -127,11 +149,19 @@ class PrivateService:
 
         key = base64.urlsafe_b64decode(encoded_key.encode(_KEY_ENCODING))
         disk_id = await self._resolve_user_disk_id(user_id)
-        base_path = self._private_base_path(user_id, disk_id)
-        base_path.mkdir(parents=True, exist_ok=True)
-        inner = PlainStorageAdapter(base_path, disk_id=disk_id)
+        root_prefix = user_private_root_prefix(user_id)
+        inner = await build_section_adapter(
+            disk_id,
+            root_prefix,
+            user_id=user_id,
+        )
         adapter = EncryptedStorageAdapter(inner=inner, key=key)
-        logger.info("Private FileService initialized for user {} on disk {}", user_id, disk_id)
+        logger.info(
+            "Private FileService initialized for user {} disk_id={} root_prefix={}",
+            user_id,
+            disk_id,
+            root_prefix,
+        )
         return FileService(
             adapter,
             self._quota_repo,
@@ -168,12 +198,3 @@ class PrivateService:
 
         disk_router = DiskRouter(self._settings)
         return disk_router.get_write_disk().id
-
-    def _private_base_path(self, user_id: UUID, disk_id: str) -> Path:
-        disk_router = DiskRouter(self._settings)
-        disk = disk_router.get_disk_by_id(disk_id)
-        return disk.mount_path / "users" / str(user_id) / "private"
-
-    @staticmethod
-    def _inner_marker_path(inner: PlainStorageAdapter) -> Path:
-        return inner.base_path / MARKER_FILENAME

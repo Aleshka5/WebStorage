@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import Depends, HTTPException, status
 from loguru import logger
 
@@ -12,13 +10,16 @@ from app.domain.value_objects.role import Role
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.disk_router import DiskRouter
-from app.infrastructure.storage.plain_adapter import PlainStorageAdapter
 from app.presentation.dependencies.archive_providers import (
     get_archive_disk_router,
     get_archive_manager,
 )
 from app.presentation.dependencies.auth import get_quota_repository
 from app.presentation.dependencies.files import get_file_repository
+from app.presentation.dependencies.storage_factory import (
+    build_section_adapter,
+    shared_root_prefix,
+)
 from app.presentation.middleware.check_role import check_role
 from config import get_settings
 
@@ -36,12 +37,6 @@ async def _resolve_shared_disk_id(file_repo: FileRepository) -> str:
         raise
 
 
-def _shared_base_path(disk_id: str) -> Path:
-    disk_router = DiskRouter(get_settings())
-    disk = disk_router.get_disk_by_id(disk_id)
-    return disk.mount_path / "shared"
-
-
 async def get_shared_file_service(
     _current_user: User = Depends(check_role(Role.FAMILY, Role.ADMIN)),
     quota_repo: QuotaRepository = Depends(get_quota_repository),
@@ -49,9 +44,8 @@ async def get_shared_file_service(
 ) -> FileService:
     try:
         disk_id = await _resolve_shared_disk_id(file_repo)
-        base_path = _shared_base_path(disk_id)
-        base_path.mkdir(parents=True, exist_ok=True)
-        adapter = PlainStorageAdapter(base_path, disk_id=disk_id)
+        root_prefix = shared_root_prefix()
+        adapter = await build_section_adapter(disk_id, root_prefix)
     except StorageUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -61,7 +55,11 @@ async def get_shared_file_service(
             },
         ) from exc
 
-    logger.info("Shared FileService initialized on disk {} at {}", disk_id, base_path)
+    logger.info(
+        "Shared FileService initialized on disk {} root_prefix={}",
+        disk_id,
+        root_prefix,
+    )
     return FileService(
         adapter,
         quota_repo,

@@ -1,4 +1,3 @@
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -278,7 +277,7 @@ async def run_backup(
     backup_service: BackupService = Depends(get_backup_service),
 ) -> BackupRunResponse:
     try:
-        path = await asyncio.to_thread(backup_service.run_db_backup)
+        result = await backup_service.run_db_backup()
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -288,16 +287,15 @@ async def run_backup(
             },
         ) from exc
 
-    size_bytes = path.stat().st_size
     logger.bind(
         user_id=str(admin.id),
         action="db_backup",
         result="success",
-    ).info("Manual database backup completed: filename={}", path.name)
+    ).info("Manual database backup completed: filename={}", result.filename)
     return BackupRunResponse(
-        filename=path.name,
-        path=str(path),
-        size_bytes=size_bytes,
+        filename=result.filename,
+        path=result.logical_path,
+        size_bytes=result.size_bytes,
     )
 
 
@@ -306,7 +304,7 @@ async def list_backups(
     _admin: User = Depends(check_role(Role.ADMIN)),
     backup_service: BackupService = Depends(get_backup_service),
 ) -> BackupListResponse:
-    entries = backup_service.list_backups()
+    entries = await backup_service.list_backups()
     items = [BackupEntryResponse.from_entry(entry) for entry in entries]
     logger.bind(action="db_backup_list", result="success").info(
         "Admin backup list returned {} items",

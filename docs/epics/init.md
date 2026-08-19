@@ -13,6 +13,7 @@
 | Admin Panel | [admin-panel](./admin-panel/init.md) | Partial (no unblock/reset UI) | P1 |
 | Storage Infrastructure | [storage-infrastructure](./storage-infrastructure/init.md) | Implemented (strategy variants pending) | P1 |
 | Archiving & Backup | [archiving-backup](./archiving-backup/init.md) | Backend implemented; FE ops limited | P2 |
+| Move FS → S3 MinIO | [s3-minio-migration](./s3-minio-migration/init.md) | Partial (1 TiB capacity fallback; no HTTP ASGI e2e) | P1 |
 
 ## How to work an epic
 

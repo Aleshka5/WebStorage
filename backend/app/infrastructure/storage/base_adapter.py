@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -22,8 +24,8 @@ class FileNode:
 class StorageAdapter(ABC):
     @property
     @abstractmethod
-    def base_path(self) -> Path:
-        """Root directory this adapter operates within."""
+    def root_prefix(self) -> str:
+        """Logical root key prefix (e.g. users/{id}/files), backend-agnostic."""
 
     @property
     @abstractmethod
@@ -36,11 +38,32 @@ class StorageAdapter(ABC):
         """Path from disk root to the adapter base (e.g. users/{id}/files)."""
 
     @staticmethod
-    def _safe_path(base: Path, user_input: str) -> Path:
+    def _safe_logical_key(user_input: str) -> str:
+        """Normalize a logical path and forbid ``..`` / escape segments."""
         normalized_input = user_input.strip().replace("\\", "/").lstrip("/")
-        base_resolved = base.resolve()
-        candidate = (base_resolved / normalized_input).resolve()
+        if not normalized_input:
+            return ""
 
+        parts: list[str] = []
+        for part in normalized_input.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                raise PathTraversalError(
+                    f"Path {user_input!r} escapes allowed directory"
+                )
+            parts.append(part)
+        return "/".join(parts)
+
+    @staticmethod
+    def _safe_path(base: Path, user_input: str) -> Path:
+        """Resolve ``user_input`` under an FS ``base`` using logical-key rules."""
+        logical = StorageAdapter._safe_logical_key(user_input)
+        base_resolved = base.resolve()
+        if not logical:
+            return base_resolved
+
+        candidate = (base_resolved / logical).resolve()
         try:
             candidate.relative_to(base_resolved)
         except ValueError as exc:
@@ -84,9 +107,17 @@ class StorageAdapter(ABC):
     async def exists(self, path: str) -> bool:
         pass
 
+    @abstractmethod
+    async def get_size(self, path: str) -> int:
+        """Return size in bytes of a file at ``path``."""
+
+    @abstractmethod
+    async def list_stale_tmp_entry_paths(self, cutoff_ts: float) -> list[str]:
+        """Return adapter-relative paths of stale entries under any ``.tmp/`` directory."""
+
     def to_disk_relative_path(self, section_path: str) -> str:
-        """Convert a path relative to base_path into a disk-root-relative path."""
-        normalized = section_path.strip().replace("\\", "/").lstrip("/")
+        """Convert a path relative to root_prefix into a disk-root-relative path."""
+        normalized = self._safe_logical_key(section_path)
         if not normalized:
             return self.disk_relative_prefix
         return f"{self.disk_relative_prefix}/{normalized}"

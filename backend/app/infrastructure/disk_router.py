@@ -1,7 +1,36 @@
+"""Disk volume selection and health probes.
+
+FS backend (``STORAGE_BACKEND=fs``)
+----------------------------------
+Free/total space comes from ``statvfs`` / ``df`` on ``STORAGE_ROOT/{disk_id}``.
+
+S3 backend (``STORAGE_BACKEND=s3``)
+----------------------------------
+Each ``STORAGE_DISKS`` entry maps to bucket ``{S3_BUCKET_PREFIX}{disk_id}``.
+Availability is probed with ``HeadBucket``. Used bytes are the sum of object
+``Size`` values in that bucket. Total capacity prefers MinIO Admin API
+(``GET /minio/admin/v3/info`` drive totals); when that is unavailable, a
+documented fallback total (1 TiB) is used so ``free ≈ total − used`` still
+drives ``HEALTHY`` / ``LOW_SPACE`` against ``MIN_FREE_SPACE_MB``.
+"""
+
+from __future__ import annotations
+
+import json
 import os
 import time
+import urllib.error
+import urllib.request
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
+import boto3
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
+from botocore.config import Config
+from botocore.credentials import Credentials
+from botocore.exceptions import BotoCoreError, ClientError
 from loguru import logger
 
 from app.domain.entities.disk_volume import DiskVolume
@@ -12,11 +41,22 @@ DISK_STATUS_HEALTHY = "HEALTHY"
 DISK_STATUS_LOW_SPACE = "LOW_SPACE"
 DISK_STATUS_UNAVAILABLE = "UNAVAILABLE"
 
+# Used when MinIO Admin capacity is unreachable (no secrets; operator-facing approximation).
+_S3_FALLBACK_TOTAL_BYTES = 1 << 40  # 1 TiB
+
 
 class DiskRouter:
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        s3_client_factory: Callable[[], Any] | None = None,
+        s3_capacity_probe: Callable[[int], tuple[int, int]] | None = None,
+    ) -> None:
         self._settings = settings or get_settings()
-        self._space_cache: dict[str, tuple[int, float]] = {}
+        self._s3_client_factory = s3_client_factory
+        self._s3_capacity_probe = s3_capacity_probe
+        self._space_cache: dict[str, tuple[dict[str, int] | None, float]] = {}
         self._disks = self._build_disk_volumes()
 
     def _build_disk_volumes(self) -> list[DiskVolume]:
@@ -32,7 +72,12 @@ class DiskRouter:
             )
             for index, disk_id in enumerate(disk_ids)
         ]
-        logger.info("DiskRouter initialized with {} disks at root {}", len(disks), storage.root)
+        logger.info(
+            "DiskRouter initialized with {} disks at root {} (backend={})",
+            len(disks),
+            storage.root,
+            storage.backend,
+        )
         return disks
 
     def get_all_disks(self) -> list[DiskVolume]:
@@ -73,18 +118,9 @@ class DiskRouter:
 
     def get_free_space(self, disk_id: str) -> int:
         disk = self.get_disk_by_id(disk_id)
-        cached = self._space_cache.get(disk_id)
-        ttl = self._settings.storage.disk_space_cache_ttl
-        now = time.monotonic()
-
-        if cached is not None and now - cached[1] < ttl:
-            return cached[0]
-
         free_space = self._probe_free_space(disk)
         if free_space is None:
             raise StorageUnavailableError(f"Disk {disk_id} is unavailable")
-
-        self._space_cache[disk_id] = (free_space, now)
         return free_space
 
     def health_check(self) -> dict[str, str]:
@@ -114,6 +150,161 @@ class DiskRouter:
         return self._probe_disk_space(disk)
 
     def _probe_disk_space(self, disk: DiskVolume) -> dict[str, int] | None:
+        cached = self._space_cache.get(disk.id)
+        ttl = self._settings.storage.disk_space_cache_ttl
+        now = time.monotonic()
+        if cached is not None and now - cached[1] < ttl:
+            return cached[0]
+
+        if self._settings.storage.backend == "s3":
+            result = self._probe_s3_disk_space(disk)
+        else:
+            result = self._probe_fs_disk_space(disk)
+
+        self._space_cache[disk.id] = (result, now)
+        return result
+
+    def _bucket_for_disk(self, disk_id: str) -> str:
+        return f"{self._settings.s3.bucket_prefix}{disk_id}"
+
+    def _create_s3_client(self) -> Any:
+        if self._s3_client_factory is not None:
+            return self._s3_client_factory()
+
+        s3 = self._settings.s3
+        addressing = "path" if s3.path_style else "virtual"
+        return boto3.client(
+            "s3",
+            endpoint_url=s3.endpoint_url or None,
+            aws_access_key_id=s3.access_key or None,
+            aws_secret_access_key=s3.secret_key or None,
+            region_name=s3.region,
+            use_ssl=s3.use_ssl,
+            config=Config(s3={"addressing_style": addressing}),
+        )
+
+    def _probe_s3_disk_space(self, disk: DiskVolume) -> dict[str, int] | None:
+        bucket = self._bucket_for_disk(disk.id)
+        try:
+            client = self._create_s3_client()
+            client.head_bucket(Bucket=bucket)
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "unknown")
+            logger.warning(
+                "S3 bucket {} for disk {} is unavailable (error={})",
+                bucket,
+                disk.id,
+                error_code,
+            )
+            return None
+        except (BotoCoreError, OSError):
+            logger.exception(
+                "Failed to reach S3 endpoint while probing disk {} (bucket={})",
+                disk.id,
+                bucket,
+            )
+            return None
+
+        try:
+            used_bytes = self._s3_bucket_used_bytes(client, bucket)
+            total_bytes, free_bytes = self._s3_resolve_capacity(used_bytes)
+        except (BotoCoreError, ClientError, OSError):
+            logger.exception(
+                "Failed to measure S3 capacity for disk {} (bucket={})",
+                disk.id,
+                bucket,
+            )
+            return None
+
+        logger.info(
+            "S3 disk {} bucket {} capacity: total_bytes={}, used_bytes={}, free_bytes={}",
+            disk.id,
+            bucket,
+            total_bytes,
+            used_bytes,
+            free_bytes,
+        )
+        return {
+            "total_bytes": total_bytes,
+            "used_bytes": used_bytes,
+            "free_bytes": free_bytes,
+        }
+
+    def _s3_bucket_used_bytes(self, client: Any, bucket: str) -> int:
+        used = 0
+        continuation: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": bucket}
+            if continuation:
+                kwargs["ContinuationToken"] = continuation
+            response = client.list_objects_v2(**kwargs)
+            for obj in response.get("Contents") or ():
+                used += int(obj.get("Size") or 0)
+            if not response.get("IsTruncated"):
+                break
+            continuation = response.get("NextContinuationToken")
+            if not continuation:
+                break
+        return used
+
+    def _s3_resolve_capacity(self, used_bytes: int) -> tuple[int, int]:
+        """Return ``(total_bytes, free_bytes)`` for routing and health.
+
+        Prefers MinIO Admin drive totals; otherwise uses the 1 TiB fallback so
+        ``free = max(0, total − used)`` remains comparable across buckets.
+        """
+        if self._s3_capacity_probe is not None:
+            return self._s3_capacity_probe(used_bytes)
+
+        admin_total = self._probe_minio_admin_total_bytes()
+        total_bytes = admin_total if admin_total is not None else _S3_FALLBACK_TOTAL_BYTES
+        if admin_total is None:
+            logger.warning(
+                "MinIO admin capacity unavailable; using fallback total_bytes={}",
+                _S3_FALLBACK_TOTAL_BYTES,
+            )
+        free_bytes = max(0, total_bytes - used_bytes)
+        return total_bytes, free_bytes
+
+    def _probe_minio_admin_total_bytes(self) -> int | None:
+        s3 = self._settings.s3
+        endpoint = (s3.endpoint_url or "").rstrip("/")
+        if not endpoint or not s3.access_key or not s3.secret_key:
+            return None
+
+        url = f"{endpoint}/minio/admin/v3/info"
+        try:
+            credentials = Credentials(s3.access_key, s3.secret_key)
+            request = AWSRequest(method="GET", url=url)
+            SigV4Auth(credentials, "s3", s3.region).add_auth(request)
+            prepared = request.prepare()
+            http_request = urllib.request.Request(
+                prepared.url,
+                headers=dict(prepared.headers),
+                method="GET",
+            )
+            with urllib.request.urlopen(http_request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
+            logger.warning("MinIO admin info probe failed for endpoint {}", endpoint)
+            return None
+
+        total = 0
+        found = False
+        for server in payload.get("servers") or ():
+            drives = server.get("drives") or server.get("Disks") or ()
+            for drive in drives:
+                space = drive.get("totalSpace", drive.get("TotalSpace"))
+                if space is None:
+                    continue
+                total += int(space)
+                found = True
+        if not found:
+            logger.warning("MinIO admin info response had no drive totalSpace fields")
+            return None
+        return total
+
+    def _probe_fs_disk_space(self, disk: DiskVolume) -> dict[str, int] | None:
         mount_path = disk.mount_path
         if not mount_path.exists():
             return None

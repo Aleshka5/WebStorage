@@ -1,16 +1,16 @@
 import asyncio
 import mimetypes
+import tempfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
-import aiofiles
 from loguru import logger
 
 from app.application.archived_file_reader import (
-    resolve_archived_file_path,
+    delete_archived_blob,
     stream_decompressed_archived,
 )
 from app.domain.entities.file_record import FileRecord, FileSection, FileStatus
@@ -216,9 +216,7 @@ class PhotoService:
         preview_path = self._preview_path(file_id)
 
         if record.is_archived:
-            archive_path = resolve_archived_file_path(record, self._disk_router)
-            if archive_path.is_file():
-                await asyncio.to_thread(archive_path.unlink)
+            await delete_archived_blob(record)
         else:
             original_path = self._to_section_path(record)
             if await self._adapter.exists(original_path):
@@ -234,13 +232,28 @@ class PhotoService:
     async def _generate_preview(self, source_section_path: str, preview_section_path: str) -> None:
         try:
             await self._adapter.mkdir(PREVIEWS_DIR)
-            source_path = self._adapter.base_path / source_section_path
-            output_path = self._adapter.base_path / preview_section_path
-            await asyncio.to_thread(
-                self._thumbnail_service.generate,
-                source_path,
-                output_path,
-                self._thumbnail_max_px,
+            source_bytes = await self._read_bytes(source_section_path)
+
+            with tempfile.TemporaryDirectory(prefix="photo-preview-") as tmp_dir:
+                tmp_root = Path(tmp_dir)
+                source_tmp = tmp_root / "source"
+                preview_tmp = tmp_root / "preview.jpg"
+                await asyncio.to_thread(source_tmp.write_bytes, source_bytes)
+                await asyncio.to_thread(
+                    self._thumbnail_service.generate,
+                    source_tmp,
+                    preview_tmp,
+                    self._thumbnail_max_px,
+                )
+                preview_bytes = await asyncio.to_thread(preview_tmp.read_bytes)
+
+            async def _preview_stream() -> AsyncIterator[bytes]:
+                yield preview_bytes
+
+            await self._adapter.write(
+                preview_section_path,
+                _preview_stream(),
+                len(preview_bytes),
             )
             logger.info("Preview generated at {}", preview_section_path)
         except Exception:
@@ -272,7 +285,6 @@ class PhotoService:
         async for chunk in stream_decompressed_archived(
             record,
             self._archive_manager,
-            self._disk_router,
         ):
             yield chunk
 
@@ -283,9 +295,10 @@ class PhotoService:
         return b"".join(chunks)
 
     async def _read_bytes(self, section_path: str) -> bytes:
-        target = self._adapter.base_path / section_path
-        async with aiofiles.open(target, mode="rb") as file_handle:
-            return await file_handle.read()
+        chunks: list[bytes] = []
+        async for chunk in self._adapter.read(section_path):
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     def _to_section_path(self, record: FileRecord) -> str:
         prefix = f"{self._adapter.disk_relative_prefix}/"

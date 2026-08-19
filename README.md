@@ -108,7 +108,86 @@ Metadata DB backups are saved on the first disk in `STORAGE_DISKS` (default `dis
 
 ---
 
+## MinIO object storage
 
+`docker compose` starts [MinIO](https://min.io/) alongside the app for the S3 migration epic. The filesystem mount on `app` remains; keep `STORAGE_BACKEND=fs` until the S3 adapter and data migration are ready.
+
+### Start / console
+
+```bash
+docker compose up -d minio minio-init
+# or the full stack:
+docker compose up --build -d
+```
+
+| Endpoint | URL (host bind matches other services) |
+|---|---|
+| S3 API | `http://192.168.1.103:9000` (in-compose: `http://minio:9000`) |
+| Web console | `http://192.168.1.103:9001` |
+
+Log into the console with `S3_ACCESS_KEY` / `S3_SECRET_KEY` from `.env` (same values as MinIO root user/password).
+
+### Environment variables
+
+See `.env.example`. Names used by compose and (later) the app:
+
+| Variable | Example | Description |
+|---|---|---|
+| `STORAGE_BACKEND` | `fs` | `fs` (default) or `s3` when the adapter is enabled |
+| `S3_ENDPOINT_URL` | `http://minio:9000` | API URL from the app container |
+| `S3_ACCESS_KEY` | `minioadmin` | Access key (= MinIO root user) |
+| `S3_SECRET_KEY` | `minioadmin` | Secret key (= MinIO root password) |
+| `S3_REGION` | `us-east-1` | Region (MinIO accepts any) |
+| `S3_USE_SSL` | `false` | TLS to the endpoint |
+| `S3_PATH_STYLE` | `true` | Path-style URLs (required for MinIO in Docker) |
+
+Object **keys stay isomorphic** to today’s relative paths under `{STORAGE_ROOT}/{disk_id}/…` (e.g. `users/{user_id}/files/…`). Buckets map 1:1 to `STORAGE_DISKS` entries (`disk1`, …); DB dumps use a separate `backups` bucket.
+
+### Bucket bootstrap
+
+On each stack start, `minio-init` (MinIO Client `mc`) creates buckets idempotently:
+
+- one bucket per name in `STORAGE_DISKS` (comma-separated);
+- `backups` for metadata DB dumps (replaces `{disk}/_meta/backups/` when on S3).
+
+Safe to re-run; existing buckets are left untouched (`mc mb --ignore-existing`).
+
+### Persistence and capacity
+
+- Data lives in the named Docker volume `minio_data` (see `docker-compose.yml`).
+- **Expand capacity:** grow the host disk that backs Docker volumes, or migrate the volume to a larger disk (`docker volume` inspect → copy `/var/lib/docker/volumes/…`). Adding another logical “disk” means create a new MinIO bucket (add the name to `STORAGE_DISKS`, restart so `minio-init` creates it) — same sticky `disk_id` idea as FS mode.
+- **FS-only:** comment out `minio`, `minio-init`, and `app.depends_on.minio` in `docker-compose.yml`.
+
+### Migrate existing FS blobs to MinIO (US-S3-08)
+
+One-shot / resumable tool: walks `{STORAGE_ROOT}/{disk_id}/…`, uploads objects with keys matching disk-relative paths into bucket `{S3_BUCKET_PREFIX}{disk_id}`, and checks `file_records.checksum_sha256` where present.
+
+**Prerequisites**
+
+1. MinIO up and buckets created (`docker compose up -d minio minio-init`).
+2. Backup PostgreSQL (and keep FS trees until verify passes).
+3. Keep `STORAGE_BACKEND=fs` until migration + verify succeed.
+4. `.env` has correct `STORAGE_ROOT`, `STORAGE_DISKS`, and `S3_*` (via `get_settings()`).
+
+**Commands** (from `backend/`, or `docker compose exec app python scripts/migrate_fs_to_s3.py …`):
+
+```bash
+cd backend
+
+# Plan only (no S3 writes)
+uv run python scripts/migrate_fs_to_s3.py --dry-run
+
+# Upload (optional: --disk disk1); re-run skips same-size objects
+uv run python scripts/migrate_fs_to_s3.py
+uv run python scripts/migrate_fs_to_s3.py --disk disk1
+
+# Verify S3 contents / DB checksums (no upload)
+uv run python scripts/migrate_fs_to_s3.py --verify-only
+```
+
+**After a clean verify:** set `STORAGE_BACKEND=s3` in `.env` and restart the app. See also `python scripts/migrate_fs_to_s3.py --help`.
+
+---
 
 ## Restoring from backup
 

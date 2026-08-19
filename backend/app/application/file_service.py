@@ -11,7 +11,7 @@ import aiofiles.os
 from loguru import logger
 
 from app.application.archived_file_reader import (
-    resolve_archived_file_path,
+    delete_archived_blob,
     stream_decompressed_archived,
 )
 from app.application.archive_service import ARCHIVE_EXTENSION
@@ -754,26 +754,19 @@ class FileService:
         return record
 
     async def _stream_archived(self, record: FileRecord) -> AsyncIterator[bytes]:
-        if self._archive_manager is None or self._disk_router is None:
+        if self._archive_manager is None:
             raise FileNotFoundError(f"Archived file {record.id} cannot be read")
 
         encrypted_adapter = self._adapter if isinstance(self._adapter, EncryptedStorageAdapter) else None
         async for chunk in stream_decompressed_archived(
             record,
             self._archive_manager,
-            self._disk_router,
             encrypted_adapter=encrypted_adapter,
         ):
             yield chunk
 
     async def _delete_archived_file(self, record: FileRecord) -> None:
-        if self._disk_router is None:
-            raise FileNotFoundError(f"Archived file {record.id} cannot be deleted")
-
-        archive_path = resolve_archived_file_path(record, self._disk_router)
-        if archive_path.is_file():
-            await asyncio.to_thread(archive_path.unlink)
-            logger.info("Deleted archived file at {}", archive_path)
+        await delete_archived_blob(record)
 
     def _to_section_path(self, record: FileRecord) -> str:
         prefix = f"{self._adapter.disk_relative_prefix}/"

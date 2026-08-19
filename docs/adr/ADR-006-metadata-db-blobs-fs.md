@@ -1,8 +1,8 @@
 # ADR-006: Metadata in PostgreSQL; blobs on filesystem
 
-- **Status:** Accepted
+- **Status:** Accepted — blob placement superseded by [ADR-007](./ADR-007-minio-blob-backend.md) when `STORAGE_BACKEND=s3`; metadata-in-PostgreSQL remains valid
 - **Date:** 2026-06-01
-- **Related:** `file_records`, storage layout, backup jobs
+- **Related:** `file_records`, storage layout, backup jobs, [ADR-007](./ADR-007-minio-blob-backend.md)
 
 ## Context
 

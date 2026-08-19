@@ -15,6 +15,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      # MinIO is always started with the stack for the S3 migration epic.
+      # For FS-only local use: comment out this entry and the `minio` / `minio-init` services below.
+      minio:
+        condition: service_healthy
 
   frontend:
     build:
@@ -42,8 +46,50 @@ services:
     volumes:
       - redis_data:/data
 
+  # Object storage (MinIO). Disable with FS-only mode: comment out this service,
+  # `minio-init`, and the app `depends_on.minio` entry above.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "192.168.1.103:9000:9000"
+      - "192.168.1.103:9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - /media/aleksey/HardDisk/storage:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Idempotent bucket bootstrap: one bucket per STORAGE_DISKS entry + backups.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      STORAGE_DISKS: ${STORAGE_DISKS:-disk1}
+      S3_BUCKET_PREFIX: ${S3_BUCKET_PREFIX:-}
+    entrypoint: >
+      /bin/sh -c "
+      set -e;
+      mc alias set local http://minio:9000 \"$${S3_ACCESS_KEY}\" \"$${S3_SECRET_KEY}\";
+      for disk in $$(echo \"$${STORAGE_DISKS}\" | tr ',' ' '); do
+        mc mb --ignore-existing \"local/$${S3_BUCKET_PREFIX}$${disk}\";
+      done;
+      mc mb --ignore-existing local/backups;
+      echo 'MinIO buckets ready';
+      "
+
 volumes:
   pg_data:
   redis_data:
+  minio_data:
   caddy_data:
   caddy_config:

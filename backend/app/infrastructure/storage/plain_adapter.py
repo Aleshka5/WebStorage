@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import os
@@ -25,13 +27,19 @@ class PlainStorageAdapter(StorageAdapter):
         self._disk_root = self._resolve_disk_root()
         self._disk_relative_prefix = self._base_path.relative_to(self._disk_root).as_posix()
         logger.info(
-            "PlainStorageAdapter initialized: disk_id={}, base_path={}",
+            "PlainStorageAdapter initialized: disk_id={}, root_prefix={}, base_path={}",
             self._disk_id,
+            self._disk_relative_prefix,
             self._base_path,
         )
 
     @property
+    def root_prefix(self) -> str:
+        return self._disk_relative_prefix
+
+    @property
     def base_path(self) -> Path:
+        """FS absolute path for this adapter root (filesystem backend only)."""
         return self._base_path
 
     @property
@@ -157,3 +165,42 @@ class PlainStorageAdapter(StorageAdapter):
     async def exists(self, path: str) -> bool:
         target = self._safe_path(self._base_path, path)
         return target.exists()
+
+    async def get_size(self, path: str) -> int:
+        target = self._safe_path(self._base_path, path)
+        if not target.is_file():
+            raise FileNotFoundError(f"File {path!r} not found")
+        return target.stat().st_size
+
+    async def list_stale_tmp_entry_paths(self, cutoff_ts: float) -> list[str]:
+        if not self._base_path.exists():
+            logger.warning(
+                "Disk base path {} does not exist, skipping tmp scan",
+                self._base_path,
+            )
+            return []
+
+        def _scan() -> list[str]:
+            found: list[str] = []
+            for tmp_dir in self._base_path.rglob(".tmp"):
+                if not tmp_dir.is_dir():
+                    continue
+                for entry in tmp_dir.iterdir():
+                    try:
+                        mtime = entry.stat().st_mtime
+                    except OSError:
+                        logger.warning("Failed to stat tmp entry {}", entry)
+                        continue
+                    if mtime >= cutoff_ts:
+                        continue
+                    found.append(entry.relative_to(self._base_path).as_posix())
+            return found
+
+        stale = await asyncio.to_thread(_scan)
+        logger.info(
+            "Found {} stale tmp entries under {} (disk_id={})",
+            len(stale),
+            self._base_path,
+            self._disk_id,
+        )
+        return stale

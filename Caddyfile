@@ -5,8 +5,12 @@ https://filenkov.store {
     @api path /api/* /docs /openapi.json /redoc
     reverse_proxy @api app:8000
 
-    # Everything else -> frontend (Vite / static build)
-    reverse_proxy frontend:5173
+    # /app/* -> frontend (Vite / static build)
+    @app path /app/*
+    reverse_proxy @app frontend:5173
+
+    # Everything else -> lllama server (host:1234)
+    reverse_proxy 192.168.1.102:8080
 
     # --- TLS ---
     # Automatic HTTPS: Caddy requests a Let's Encrypt cert for filenkov.store
@@ -39,3 +43,5 @@ https://filenkov.store {
 http://filenkov.store {
     redir https://filenkov.store{uri}
 }
+
+

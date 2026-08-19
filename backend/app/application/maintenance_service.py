@@ -1,16 +1,14 @@
-import asyncio
-import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from uuid import UUID
 
 from loguru import logger
 
 from app.domain.entities.file_record import FileRecord, FileSection
+from app.domain.exceptions import FileNotFoundError as DomainFileNotFoundError
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.disk_router import DiskRouter
+from app.infrastructure.storage.s3_adapter import build_disk_root_adapter
 
 PENDING_STALE_HOURS = 1
 TMP_STALE_HOURS = 1
@@ -83,11 +81,29 @@ class MaintenanceService:
 
         deleted = 0
         for disk in self._disk_router.get_all_disks():
-            deleted += await asyncio.to_thread(
-                self._cleanup_disk_tmp_dirs,
-                disk.mount_path,
-                cutoff_ts,
-            )
+            adapter = build_disk_root_adapter(disk.id)
+            stale_paths = await adapter.list_stale_tmp_entry_paths(cutoff_ts)
+            for path in stale_paths:
+                try:
+                    await adapter.delete(path)
+                    deleted += 1
+                    logger.info(
+                        "Removed stale tmp entry {} on disk {}",
+                        path,
+                        disk.id,
+                    )
+                except DomainFileNotFoundError:
+                    logger.warning(
+                        "Stale tmp entry {} already gone on disk {}",
+                        path,
+                        disk.id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to remove stale tmp entry {} on disk {}",
+                        path,
+                        disk.id,
+                    )
 
         self._update_stats(tmp_deleted=deleted)
         logger.info(".tmp cleanup completed: deleted={}", deleted)
@@ -143,26 +159,33 @@ class MaintenanceService:
         return MaintenanceService._last_stats
 
     async def _delete_tmp_file(self, record: FileRecord) -> None:
-        tmp_path = self._resolve_tmp_path(record)
-        if not tmp_path.is_file():
+        adapter = build_disk_root_adapter(record.disk_id)
+        tmp_path = self._resolve_tmp_logical_path(record)
+        try:
+            if not await adapter.exists(tmp_path):
+                logger.info(
+                    "No tmp file to delete for stale PENDING record {} at {}",
+                    record.id,
+                    tmp_path,
+                )
+                return
+            await adapter.delete(tmp_path)
+            logger.info(
+                "Deleted tmp file for stale PENDING record {} at {}",
+                record.id,
+                tmp_path,
+            )
+        except DomainFileNotFoundError:
             logger.info(
                 "No tmp file to delete for stale PENDING record {} at {}",
                 record.id,
                 tmp_path,
             )
-            return
 
-        await asyncio.to_thread(tmp_path.unlink)
-        logger.info(
-            "Deleted tmp file for stale PENDING record {} at {}",
-            record.id,
-            tmp_path,
-        )
-
-    def _resolve_tmp_path(self, record: FileRecord) -> Path:
-        disk = self._disk_router.get_disk_by_id(record.disk_id)
-        section_prefix = self._section_disk_prefix(record)
-        return disk.mount_path / section_prefix / TMP_DIR_NAME / str(record.id)
+    @staticmethod
+    def _resolve_tmp_logical_path(record: FileRecord) -> str:
+        section_prefix = MaintenanceService._section_disk_prefix(record)
+        return f"{section_prefix}/{TMP_DIR_NAME}/{record.id}"
 
     @staticmethod
     def _section_disk_prefix(record: FileRecord) -> str:
@@ -176,39 +199,6 @@ class MaintenanceService:
                 return f"users/{user_id}/private"
             case FileSection.SHARED:
                 return "shared"
-
-    @staticmethod
-    def _cleanup_disk_tmp_dirs(mount_path: Path, cutoff_ts: float) -> int:
-        if not mount_path.exists():
-            logger.warning("Disk mount path {} does not exist, skipping tmp cleanup", mount_path)
-            return 0
-
-        deleted = 0
-        for tmp_dir in mount_path.rglob(TMP_DIR_NAME):
-            if not tmp_dir.is_dir():
-                continue
-
-            for entry in tmp_dir.iterdir():
-                try:
-                    mtime = entry.stat().st_mtime
-                except OSError:
-                    logger.warning("Failed to stat tmp entry {}", entry)
-                    continue
-
-                if mtime >= cutoff_ts:
-                    continue
-
-                try:
-                    if entry.is_dir():
-                        shutil.rmtree(entry)
-                    else:
-                        entry.unlink()
-                    deleted += 1
-                    logger.info("Removed stale tmp entry {}", entry)
-                except OSError:
-                    logger.exception("Failed to remove stale tmp entry {}", entry)
-
-        return deleted
 
     @classmethod
     def _update_stats(

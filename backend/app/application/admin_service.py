@@ -2,10 +2,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-import asyncio
-import shutil
-from pathlib import Path
-
 from loguru import logger
 
 from app.domain.entities.file_record import FileRecord, FileSection
@@ -16,6 +12,7 @@ from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.database.repositories.user_repo import UserRepository
 from app.infrastructure.disk_router import DiskRouter
+from app.infrastructure.storage.s3_adapter import build_disk_root_adapter
 from config import Settings, get_settings
 
 BYTES_PER_GB = 1024 * 1024 * 1024
@@ -179,18 +176,29 @@ class AdminService:
 
     async def _cleanup_user_storage(self, user_id: UUID, records: list[FileRecord]) -> None:
         for disk in self._disk_router.get_all_disks():
-            user_dir = disk.mount_path / "users" / str(user_id)
-            if not user_dir.exists():
-                continue
-            await asyncio.to_thread(shutil.rmtree, user_dir)
-            logger.info("Removed user directory for {} on disk {}", user_id, disk.id)
+            adapter = build_disk_root_adapter(disk.id)
+            user_prefix = f"users/{user_id}"
+            try:
+                if await adapter.exists(user_prefix):
+                    await adapter.delete(user_prefix)
+                    logger.info(
+                        "Removed user storage prefix {} on disk {}",
+                        user_prefix,
+                        disk.id,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to remove user storage prefix {} on disk {}",
+                    user_prefix,
+                    disk.id,
+                )
 
         for record in records:
             if record.section != FileSection.SHARED:
                 continue
 
             try:
-                disk = self._disk_router.get_disk_by_id(record.disk_id)
+                self._disk_router.get_disk_by_id(record.disk_id)
             except KeyError:
                 logger.warning(
                     "Skipping shared file cleanup for record {}: disk {} not configured",
@@ -199,26 +207,29 @@ class AdminService:
                 )
                 continue
 
-            file_path = Path(disk.mount_path) / record.relative_path
-            if not file_path.exists():
-                logger.warning(
-                    "Shared file path {} not found during user {} deletion cleanup",
-                    file_path,
+            adapter = build_disk_root_adapter(record.disk_id)
+            path = record.archive_path or record.relative_path
+            try:
+                if await adapter.exists(path):
+                    await adapter.delete(path)
+                    logger.info(
+                        "Removed shared file {} for deleted user {} at {}",
+                        record.id,
+                        user_id,
+                        path,
+                    )
+                else:
+                    logger.warning(
+                        "Shared file path {} not found during user {} deletion cleanup",
+                        path,
+                        user_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed shared file cleanup for record {} user {}",
+                    record.id,
                     user_id,
                 )
-                continue
-
-            if file_path.is_dir():
-                await asyncio.to_thread(shutil.rmtree, file_path)
-            else:
-                await asyncio.to_thread(file_path.unlink)
-
-            logger.info(
-                "Removed shared file {} for deleted user {} at {}",
-                record.id,
-                user_id,
-                file_path,
-            )
 
     def get_storage_stats(self) -> dict[str, list[DiskStat]]:
         health = self._disk_router.health_check()

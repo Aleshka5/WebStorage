@@ -1,15 +1,19 @@
-import asyncio
+import tempfile
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import UUID
 
+import aiofiles
 from loguru import logger
 
-from app.domain.entities.file_record import FileRecord, FileStatus
+from app.domain.entities.file_record import FileRecord
+from app.domain.exceptions import FileNotFoundError as DomainFileNotFoundError
 from app.infrastructure.archive_manager import ArchiveManager
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.disk_router import DiskRouter
+from app.infrastructure.storage.base_adapter import READ_CHUNK_SIZE, StorageAdapter
+from app.infrastructure.storage.s3_adapter import build_disk_root_adapter
 from config import Settings, get_settings
 
 ARCHIVE_EXTENSION = ".zst"
@@ -109,21 +113,32 @@ class ArchiveService:
         )
 
     async def _archive_record(self, record: FileRecord) -> bool:
-        source_path = self._resolve_disk_path(record.disk_id, record.relative_path)
-        if not source_path.is_file():
+        adapter = build_disk_root_adapter(record.disk_id)
+        if not await adapter.exists(record.relative_path):
             logger.warning(
                 "Skipping archive for file {}: source missing at {}",
                 record.id,
-                source_path,
+                record.relative_path,
             )
             return False
 
         archive_relative_path = f"{record.relative_path}{ARCHIVE_EXTENSION}"
-        archive_path = self._resolve_disk_path(record.disk_id, archive_relative_path)
         compress_mode = "post_encrypt" if record.is_encrypted else "pre_encrypt"
 
-        await self._archive_manager.compress_async(source_path, archive_path, compress_mode)
-        await asyncio.to_thread(source_path.unlink)
+        with tempfile.TemporaryDirectory(prefix=f"archive-{record.id}-") as tmp_dir_name:
+            tmp_dir = Path(tmp_dir_name)
+            source_tmp = tmp_dir / "source"
+            archive_tmp = tmp_dir / "archive.zst"
+
+            await self._download_to_path(adapter, record.relative_path, source_tmp)
+            await self._archive_manager.compress_async(
+                source_tmp,
+                archive_tmp,
+                compress_mode,
+            )
+            await self._upload_from_path(adapter, archive_tmp, archive_relative_path)
+
+        await adapter.delete(record.relative_path)
 
         updated = await self._file_repo.mark_archived(record.id, archive_relative_path)
         if updated is None:
@@ -145,13 +160,26 @@ class ArchiveService:
         for record in records:
             if not record.archive_path:
                 continue
-            archive_path = self._resolve_disk_path(record.disk_id, record.archive_path)
-            if archive_path.is_file():
-                total += archive_path.stat().st_size
+            adapter = build_disk_root_adapter(record.disk_id)
+            try:
+                total += await adapter.get_size(record.archive_path)
+            except DomainFileNotFoundError:
+                logger.warning(
+                    "Archived blob missing for file {} at {}",
+                    record.id,
+                    record.archive_path,
+                )
+            except FileNotFoundError:
+                logger.warning(
+                    "Archived blob missing for file {} at {}",
+                    record.id,
+                    record.archive_path,
+                )
 
         return total
 
     def resolve_archive_path(self, record: FileRecord) -> Path:
+        """FS absolute path for an archive (fs backend only)."""
         if not record.archive_path:
             raise FileNotFoundError(f"Archive path is missing for file {record.id}")
         return self._resolve_disk_path(record.disk_id, record.archive_path)
@@ -166,3 +194,32 @@ class ArchiveService:
     def _resolve_disk_path(self, disk_id: str, relative_path: str) -> Path:
         disk = self._disk_router.get_disk_by_id(disk_id)
         return disk.mount_path / relative_path
+
+    @staticmethod
+    async def _download_to_path(
+        adapter: StorageAdapter,
+        remote_path: str,
+        local_path: Path,
+    ) -> None:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        async with aiofiles.open(local_path, mode="wb") as handle:
+            async for chunk in adapter.read(remote_path):
+                await handle.write(chunk)
+
+    @staticmethod
+    async def _upload_from_path(
+        adapter: StorageAdapter,
+        local_path: Path,
+        remote_path: str,
+    ) -> None:
+        size = local_path.stat().st_size
+
+        async def _stream() -> AsyncIterator[bytes]:
+            async with aiofiles.open(local_path, mode="rb") as handle:
+                while True:
+                    chunk = await handle.read(READ_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        await adapter.write(remote_path, _stream(), size)

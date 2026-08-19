@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import hashlib
 import os
@@ -12,7 +14,6 @@ from loguru import logger
 
 from app.domain.exceptions import FileNotFoundError
 from app.infrastructure.storage.base_adapter import FileNode, StorageAdapter
-from app.infrastructure.storage.plain_adapter import PlainStorageAdapter
 
 IV_SIZE = 12
 CHUNK_SIZE_FIELD = 4
@@ -46,19 +47,54 @@ def decrypt_blob(key: bytes, payload: bytes) -> bytes:
     return AESGCM(key).decrypt(iv, ciphertext, None)
 
 
+class _AsyncByteStream:
+    """Buffer an ``AsyncIterator[bytes]`` to support exact-sized reads."""
+
+    def __init__(self, source: AsyncIterator[bytes]) -> None:
+        self._source = source
+        self._buffer = bytearray()
+        self._exhausted = False
+
+    async def read(self, size: int) -> bytes:
+        while len(self._buffer) < size and not self._exhausted:
+            try:
+                chunk = await anext(self._source)
+            except StopAsyncIteration:
+                self._exhausted = True
+                break
+            if chunk:
+                self._buffer.extend(chunk)
+
+        if size <= 0:
+            return b""
+
+        result = bytes(self._buffer[:size])
+        del self._buffer[:size]
+        return result
+
+
 class EncryptedStorageAdapter(StorageAdapter):
-    def __init__(self, inner: PlainStorageAdapter, key: bytes) -> None:
+    def __init__(self, inner: StorageAdapter, key: bytes) -> None:
         self._inner = inner
         self._key = key
         logger.info(
-            "EncryptedStorageAdapter initialized for disk {} at {}",
+            "EncryptedStorageAdapter initialized for disk {} at root_prefix={}",
             inner.disk_id,
-            inner.base_path,
+            inner.root_prefix,
         )
 
     @property
+    def root_prefix(self) -> str:
+        return self._inner.root_prefix
+
+    @property
     def base_path(self) -> Path:
-        return self._inner.base_path
+        """FS absolute path when the inner adapter is filesystem-backed."""
+        if not hasattr(self._inner, "base_path"):
+            raise AttributeError(
+                "base_path is only available when the inner adapter is filesystem-backed"
+            )
+        return self._inner.base_path  # type: ignore[attr-defined]
 
     @property
     def disk_id(self) -> str:
@@ -85,6 +121,52 @@ class EncryptedStorageAdapter(StorageAdapter):
         ciphertext = payload[IV_SIZE:]
         plaintext = AESGCM(self._key).decrypt(iv, ciphertext, None)
         return plaintext.decode()
+
+    async def marker_exists(self) -> bool:
+        """Return whether the passphrase marker exists on the inner adapter."""
+        return await self._inner.exists(MARKER_FILENAME)
+
+    async def validate_marker(self) -> bool:
+        """Decrypt the marker via the inner adapter; return False on key mismatch."""
+        if not await self.marker_exists():
+            logger.warning(
+                "Marker missing for disk {} at root_prefix={}",
+                self.disk_id,
+                self.root_prefix,
+            )
+            return False
+
+        try:
+            payload = bytearray()
+            async for chunk in self._inner.read(MARKER_FILENAME):
+                payload.extend(chunk)
+            decrypted = decrypt_blob(self._key, bytes(payload)).decode()
+        except Exception:
+            logger.warning(
+                "Marker validation failed for disk {} (invalid key or corrupt marker)",
+                self.disk_id,
+            )
+            return False
+
+        if decrypted != MARKER_PLAINTEXT:
+            logger.warning(
+                "Marker plaintext mismatch for disk {}",
+                self.disk_id,
+            )
+            return False
+
+        logger.info("Marker validated for disk {}", self.disk_id)
+        return True
+
+    async def write_marker(self) -> None:
+        """Create/overwrite the passphrase marker through the inner adapter API."""
+        encrypted_marker = encrypt_blob(self._key, MARKER_PLAINTEXT.encode())
+
+        async def marker_stream() -> AsyncIterator[bytes]:
+            yield encrypted_marker
+
+        await self._inner.write(MARKER_FILENAME, marker_stream(), len(encrypted_marker))
+        logger.info("Wrote marker for disk {} via inner adapter", self.disk_id)
 
     async def list(self, path: str) -> list[FileNode]:
         encrypted_path = await self._resolve_encrypted_path(path)
@@ -118,15 +200,16 @@ class EncryptedStorageAdapter(StorageAdapter):
 
     async def read(self, path: str) -> AsyncIterator[bytes]:
         encrypted_path = await self._resolve_encrypted_path(path)
-        target = self._inner._safe_path(self._inner.base_path, encrypted_path)  # noqa: SLF001
-        if not target.is_file():
+        if not await self._inner.exists(encrypted_path):
             raise FileNotFoundError(f"File {path!r} not found")
 
-        async with aiofiles.open(target, mode="rb") as file_handle:
-            async for chunk in self._decrypt_stream(file_handle):
-                yield chunk
+        async for chunk in self._decrypt_stream(
+            _AsyncByteStream(self._inner.read(encrypted_path))
+        ):
+            yield chunk
 
     async def read_encrypted_blob(self, file_path: Path) -> AsyncIterator[bytes]:
+        """Decrypt a local encrypted blob (e.g. archive temp file on disk)."""
         if not file_path.is_file():
             raise FileNotFoundError(f"Encrypted blob not found at {file_path}")
 
@@ -143,16 +226,22 @@ class EncryptedStorageAdapter(StorageAdapter):
         encrypted_path = await self._to_encrypted_path(path)
         hasher = hashlib.sha256()
         bytes_written = 0
+        encrypted_size = 0
 
-        target = self._inner._safe_path(self._inner.base_path, encrypted_path)  # noqa: SLF001
-        target.parent.mkdir(parents=True, exist_ok=True)
-
-        async with aiofiles.open(target, mode="wb") as file_handle:
+        async def encrypted_stream() -> AsyncIterator[bytes]:
+            nonlocal bytes_written, encrypted_size
             async for plaintext_chunk in data:
                 hasher.update(plaintext_chunk)
                 bytes_written += len(plaintext_chunk)
                 iv, ciphertext = self._encrypt_chunk(plaintext_chunk)
-                await file_handle.write(iv + struct.pack(">I", len(ciphertext)) + ciphertext)
+                framed = iv + struct.pack(">I", len(ciphertext)) + ciphertext
+                encrypted_size += len(framed)
+                yield framed
+
+        # Encrypted byte length is known only after framing; pass 0 and rely on
+        # the counted ``encrypted_size`` for logging. Inner adapters treat size
+        # as advisory (warn-only on mismatch).
+        await self._inner.write(encrypted_path, encrypted_stream(), 0)
 
         if bytes_written != size:
             logger.warning(
@@ -163,7 +252,12 @@ class EncryptedStorageAdapter(StorageAdapter):
             )
 
         checksum = hasher.hexdigest()
-        logger.info("Wrote {} encrypted bytes for logical path {}", bytes_written, path)
+        logger.info(
+            "Wrote {} plaintext bytes ({} framed) for logical path {}",
+            bytes_written,
+            encrypted_size,
+            path,
+        )
         return checksum
 
     async def delete(self, path: str) -> None:
@@ -187,6 +281,15 @@ class EncryptedStorageAdapter(StorageAdapter):
         except FileNotFoundError:
             return False
         return await self._inner.exists(encrypted_path)
+
+    async def get_size(self, path: str) -> int:
+        if self._is_plain_storage_path(path):
+            return await self._inner.get_size(path)
+        encrypted_path = await self._resolve_encrypted_path(path)
+        return await self._decrypted_file_size(encrypted_path)
+
+    async def list_stale_tmp_entry_paths(self, cutoff_ts: float) -> list[str]:
+        return await self._inner.list_stale_tmp_entry_paths(cutoff_ts)
 
     def _encrypt_chunk(self, plaintext: bytes) -> tuple[bytes, bytes]:
         iv = os.urandom(IV_SIZE)
@@ -214,11 +317,11 @@ class EncryptedStorageAdapter(StorageAdapter):
             yield plaintext
 
     async def _decrypted_file_size(self, encrypted_path: str) -> int:
-        target = self._inner._safe_path(self._inner.base_path, encrypted_path)  # noqa: SLF001
         total = 0
-        async with aiofiles.open(target, mode="rb") as file_handle:
-            async for chunk in self._decrypt_stream(file_handle):
-                total += len(chunk)
+        async for chunk in self._decrypt_stream(
+            _AsyncByteStream(self._inner.read(encrypted_path))
+        ):
+            total += len(chunk)
         return total
 
     async def _to_encrypted_path(self, logical_path: str) -> str:

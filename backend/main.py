@@ -1,4 +1,3 @@
-import asyncio
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -116,10 +115,10 @@ async def _run_db_backup_job() -> None:
         settings=settings,
     )
     try:
-        path = await asyncio.to_thread(backup_service.run_db_backup)
+        result = await backup_service.run_db_backup()
         logger.bind(action="db_backup", result="success").info(
             "Scheduled db backup job completed: filename={}",
-            path.name,
+            result.filename,
         )
     except Exception:
         logger.bind(action="db_backup", result="error", error_code="BACKUP_JOB_FAILED").exception(

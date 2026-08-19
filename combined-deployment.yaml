@@ -1,0 +1,571 @@
+# ─── Caddy Ingress Controller ─────────────────────────────────────
+# Полноценный контроллер, который сам генерирует Caddyfile
+# из Ingress-ресурсов и управляет сертификатами ACME.
+# ACME: staging (для продакшена замените acmeCA на production CA).
+
+# ─── PodDisruptionBudget ──────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mycaddy-caddy-ingress-controller
+  namespace: caddy-system
+  labels:
+    helm.sh/chart: caddy-ingress-controller-1.3.0
+    app.kubernetes.io/name: caddy-ingress-controller
+    app.kubernetes.io/instance: mycaddy
+    app.kubernetes.io/version: "v0.2.1"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: caddy-ingress-controller
+      app.kubernetes.io/instance: mycaddy
+
+---
+# ─── ServiceAccount ───────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: caddy-ingress-controller
+  namespace: caddy-system
+  labels:
+    helm.sh/chart: caddy-ingress-controller-1.3.0
+    app.kubernetes.io/name: caddy-ingress-controller
+    app.kubernetes.io/instance: mycaddy
+    app.kubernetes.io/version: "v0.2.1"
+    app.kubernetes.io/managed-by: Helm
+
+---
+# ─── ConfigMap (настройки Ingress Controller) ─────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddy-ingress-controller-configmap
+  namespace: caddy-system
+data:
+  acmeCA: "https://acme-staging-v02.api.letsencrypt.org/directory"
+  acmeEABKeyId: ""
+  acmeEABMacKey: ""
+  debug: "true"
+  email: "admin@filenkov.store"
+  experimentalSmartSort: "false"
+  metrics: "true"
+  onDemandTLS: "false"
+  proxyProtocol: "false"
+
+---
+# ─── ClusterRole ──────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: caddy-ingress-controller-role
+  namespace: caddy-system
+rules:
+  - apiGroups:
+      - ""
+      - "networking.k8s.io"
+      - "coordination.k8s.io"
+    resources:
+      - ingresses
+      - ingresses/status
+      - secrets
+      - leases
+    verbs: ["*"]
+  - apiGroups:
+      - ""
+    resources:
+      - services
+      - pods
+      - nodes
+      - routes
+      - extensions
+      - configmaps
+    verbs:
+      - list
+      - get
+      - watch
+
+---
+# ─── ClusterRoleBinding ───────────────────────────────────────────
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: caddy-ingress-controller-role-binding
+  namespace: caddy-system
+roleRef:
+  kind: ClusterRole
+  name: caddy-ingress-controller-role
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: caddy-ingress-controller
+    namespace: caddy-system
+
+---
+# ─── Service (LoadBalancer) ──────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: mycaddy-caddy-ingress-controller
+  namespace: caddy-system
+  labels:
+    helm.sh/chart: caddy-ingress-controller-1.3.0
+    app.kubernetes.io/name: caddy-ingress-controller
+    app.kubernetes.io/instance: mycaddy
+    app.kubernetes.io/version: "v0.2.1"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: "LoadBalancer"
+  externalTrafficPolicy:
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: https
+  selector:
+    app.kubernetes.io/name: caddy-ingress-controller
+    app.kubernetes.io/instance: mycaddy
+
+---
+# ─── Deployment (Ingress Controller) ─────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mycaddy-caddy-ingress-controller
+  namespace: caddy-system
+  labels:
+    helm.sh/chart: caddy-ingress-controller-1.3.0
+    app.kubernetes.io/name: caddy-ingress-controller
+    app.kubernetes.io/instance: mycaddy
+    app.kubernetes.io/version: "v0.2.1"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: caddy-ingress-controller
+      app.kubernetes.io/instance: mycaddy
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: caddy-ingress-controller-1.3.0
+        app.kubernetes.io/name: caddy-ingress-controller
+        app.kubernetes.io/instance: mycaddy
+        app.kubernetes.io/version: "v0.2.1"
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      serviceAccountName: caddy-ingress-controller
+      securityContext:
+        {}
+      containers:
+        - name: caddy-ingress-controller
+          securityContext:
+            allowPrivilegeEscalation: true
+            capabilities:
+              add:
+                - NET_BIND_SERVICE
+              drop:
+                - ALL
+            runAsGroup: 0
+            runAsUser: 0
+          image: "caddy/ingress:v0.2.1"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+            - name: https
+              containerPort: 443
+              protocol: TCP
+            - name: metrics
+              containerPort: 9765
+              protocol: TCP
+          resources:
+            {}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: caddyfile
+              mountPath: /etc/caddy/Caddyfile
+              subPath: Caddyfile
+          args:
+            - -config-map=caddy-ingress-controller-configmap
+            - -class-name=caddy
+          readinessProbe:
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            httpGet:
+              port: 9765
+              path: /healthz
+      volumes:
+        - name: caddyfile
+          configMap:
+            name: caddyfile
+        - name: tmp
+          emptyDir: {}
+
+---
+# ─── Caddyfile (генерируется Ingress Controller'ом) ──────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddyfile
+  namespace: caddy-system
+data:
+  Caddyfile: |
+    handle_path /healthz {
+        respond "OK"
+    }
+    reverse_proxy /api/* app.webstorage:8000
+    reverse_proxy /* frontend.webstorage:80
+
+---
+# ─── Ingress ─────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  namespace: webstorage
+  annotations:
+    kubernetes.io/ingress.class: caddy
+spec:
+  ingressClassName: caddy
+  rules:
+    - host: filenkov.store
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: app
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+
+---
+# ─── Application ConfigMaps ───────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: webstorage
+data:
+  POSTGRES_DB: cloud_db
+  REDIS_URL: redis://redis.webstorage:6379
+  STORAGE_DISKS: disk1
+  STORAGE_ROOT: /storage
+  SESSION_TTL_SECONDS: "86400"
+  PRIVATE_SESSION_TTL_HOURS: "4"
+  PHOTO_BATCH_SIZE: "30"
+  THUMBNAIL_MAX_PX: "400"
+  STRANGER_QUOTA_MB: "100"
+  ARCHIVE_DAYS_THRESHOLD: "10"
+  DISK_STRATEGY: most_free_space
+  DISK_SPACE_CACHE_TTL: "30"
+  MIN_FREE_SPACE_MB: "500"
+  GOOGLE_REDIRECT_URI: http://filenkov.store:8000/api/auth/google/callback
+  FRONTEND_URL: http://filenkov.store
+  LOG_LEVEL: INFO
+  LOG_FILE_ENABLED: "false"
+  LOG_FILE_PATH: /var/log/homecloud/app.log
+  LOG_FILE_ROTATION: "100 MB"
+  LOG_FILE_RETENTION: "30 days"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-env
+  namespace: webstorage
+data:
+  API_PROXY_TARGET: http://app.webstorage:8000
+
+---
+# ─── PersistentVolumes ────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: hdd-pv
+  namespace: webstorage
+spec:
+  capacity:
+    storage: 1000Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: hdd
+  hostPath:
+    path: /media/aleksey/HardDisk/k8s/volumes/storage
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pg-data-pv
+  namespace: webstorage
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /media/aleksey/HardDisk/k8s/volumes/pg-data
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: redis-data-pv
+  namespace: webstorage
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /media/aleksey/HardDisk/k8s/volumes/redis-data
+
+---
+# ─── PersistentVolumeClaims ───────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-hdd
+  namespace: webstorage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: hdd
+  resources:
+    requests:
+      storage: 1000Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pg-data-pvc
+  namespace: webstorage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data-pvc
+  namespace: webstorage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# ─── Deployments ──────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+  namespace: webstorage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          volumeMounts:
+            - name: pg-data
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres_admin", "-d", "cloud_db"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: pg-data
+          persistentVolumeClaim:
+            claimName: pg-data-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: webstorage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-data-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: webstorage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+        - name: app
+          image: 192.168.1.200:5000/webstorage-app:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: storage-disk1
+              mountPath: /storage/disk1
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: storage-disk1
+          persistentVolumeClaim:
+            claimName: storage-hdd
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: webstorage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: 192.168.1.200:5000/webstorage-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5173
+          envFrom:
+            - configMapRef:
+                name: frontend-env
+
+---
+# ─── Services ─────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: webstorage
+spec:
+  selector:
+    app: db
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: webstorage
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  namespace: webstorage
+spec:
+  selector:
+    app: app
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: webstorage
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 5173
