@@ -4,6 +4,11 @@ from loguru import logger
 
 from app.domain.exceptions import (
     AccessDeniedError,
+    AuthAccessDeniedError,
+    AuthBlockedError,
+    AuthMisconfiguredError,
+    AuthUnauthenticatedError,
+    AuthUnavailableError,
     FileNotFoundError,
     PathTraversalError,
     PrivateSessionExpiredError,
@@ -113,6 +118,76 @@ def register_exception_handlers(app: FastAPI) -> None:
             {
                 "error_code": ErrorCode.ACCESS_DENIED,
                 "message": str(exc) or "Access denied",
+            },
+        )
+
+    @app.exception_handler(AuthUnauthenticatedError)
+    async def auth_unauthenticated_handler(
+        _request: Request,
+        exc: AuthUnauthenticatedError,
+    ) -> JSONResponse:
+        logger.warning("Auth unauthenticated: {}", exc)
+        return _error_response(
+            status.HTTP_401_UNAUTHORIZED,
+            {
+                "error_code": ErrorCode.UNAUTHORIZED,
+                "message": str(exc) or "Authentication required",
+            },
+        )
+
+    @app.exception_handler(AuthBlockedError)
+    async def auth_blocked_handler(
+        _request: Request,
+        exc: AuthBlockedError,
+    ) -> JSONResponse:
+        logger.warning("Auth blocked: {}", exc)
+        return _error_response(
+            status.HTTP_403_FORBIDDEN,
+            {
+                "error_code": ErrorCode.ACCESS_DENIED,
+                "message": str(exc) or "Access denied",
+            },
+        )
+
+    @app.exception_handler(AuthAccessDeniedError)
+    async def auth_access_denied_handler(
+        _request: Request,
+        exc: AuthAccessDeniedError,
+    ) -> JSONResponse:
+        logger.warning("Auth access denied: {}", exc)
+        return _error_response(
+            status.HTTP_403_FORBIDDEN,
+            {
+                "error_code": ErrorCode.ACCESS_DENIED,
+                "message": str(exc) or "Access denied",
+            },
+        )
+
+    @app.exception_handler(AuthUnavailableError)
+    async def auth_unavailable_handler(
+        _request: Request,
+        exc: AuthUnavailableError,
+    ) -> JSONResponse:
+        logger.warning("Auth-Service unavailable: {}", exc)
+        return _error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            {
+                "error_code": ErrorCode.AUTH_UNAVAILABLE,
+                "message": str(exc) or "Authentication service unavailable",
+            },
+        )
+
+    @app.exception_handler(AuthMisconfiguredError)
+    async def auth_misconfigured_handler(
+        _request: Request,
+        exc: AuthMisconfiguredError,
+    ) -> JSONResponse:
+        logger.error("Auth-Service response misconfigured: {}", exc)
+        return _error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            {
+                "error_code": ErrorCode.INTERNAL_ERROR,
+                "message": "Internal server error",
             },
         )
 

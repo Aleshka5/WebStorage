@@ -61,13 +61,13 @@ Use in-memory / temp FS adapters and fake `SessionStore`.
 
 | Area | Cases |
 |---|---|
-| Auth | register/login/me/logout; rate limit 429 |
+| Auth | **Until E-AUTHZ:** register/login/me/logout; rate limit 429. **After E-AUTHZ:** no register/login/JWT; `GET /api/auth/me` + logout-forward; missing cookie 401; Validate failure mapping (see §3.5). |
 | Files | CRUD happy path; 413 over quota; traversal 400 |
 | Shared | STRANGER 403; FAMILY list/upload; delete ACL |
 | Photos | upload + list pagination `has_next` |
 | Private | ops without unlock → 401 `PRIVATE_SESSION_EXPIRED`; unlock then download |
 | Quota | `/api/quota/me` shape |
-| Admin | non-admin 403; role/quota/block |
+| Admin | non-admin 403; **after E-AUTHZ:** `GET /api/admin/users` includes live `role` text; `PATCH .../role` gone; quota/storage still ADMIN-only |
 
 Assert **error_code** strings, not only HTTP status.
 
@@ -76,6 +76,23 @@ Assert **error_code** strings, not only HTTP status.
 - Backup creates `.sql.zst` under `_meta/backups`.
 - Cleanup removes stale PENDING.
 - Reconcile corrects artificial drift.
+
+### 3.5 Auth-Service gRPC (epic E-AUTHZ)
+
+Related: [auth-service-roles](./epics/auth-service-roles/init.md). Use a **fake `AuthValidator`** in CI; optional live gRPC marked `integration`.
+
+| Case | Expectation |
+|---|---|
+| Two authenticated requests, same cookie | **Two** `Validate` RPCs (no caller cache) |
+| Missing `auth_session` | 401 `UNAUTHORIZED`; zero RPCs |
+| Expired / unknown Redis session (`Unauthenticated`) | 401 `UNAUTHORIZED`; FE → `AUTH_LOGIN_URL`, not private-unlock UI |
+| gRPC `PermissionDenied` / blocked | 403 `ACCESS_DENIED` (not login redirect) |
+| gRPC `Unavailable` / deadline | 503 `AUTH_UNAVAILABLE` (FE must **not** OAuth-redirect) |
+| `storage_roles=STRANGER` | `/api/shared` and `/api/admin` → 403; `/api/files` → 200 |
+| `storage_roles=FAMILY` | shared 200; admin 403 |
+| `storage_roles=ADMIN` | shared + admin 200 |
+| Invalid / missing `storage_roles` in fields | 500 `INTERNAL_ERROR` (misconfig), not silent STRANGER |
+| Domain/Application | No `grpcio` imports |
 
 ---
 
@@ -94,6 +111,7 @@ Assert **error_code** strings, not only HTTP status.
 |---|---|
 | `ProtectedRoute` | Redirect unauthenticated |
 | `Sidebar` | Shared/Admin visibility by role |
+| `AdminPage` (E-AUTHZ) | Role column is text, not `<select>`; no `updateUserRole` |
 | `FileManager` | Empty, list, mkdir dialog validation |
 | `PrivateUnlockModal` | Submit passphrase; show lockout/reset affordance |
 | `PhotoGrid` / `Lightbox` | Render items; open original |
@@ -107,7 +125,7 @@ Mock API modules; do not hit real backend in unit/component tests.
 3. Private unlock → upload → lock/expiry → unlock again.
 4. STRANGER cannot open `/shared` or `/admin`.
 5. FAMILY opens `/shared`.
-6. Admin changes user role and private quota.
+6. Admin changes **Auth-Service `storage_roles`** (not HomeCloud `PATCH .../role`); storage UI reflects on next load.
 
 ---
 

@@ -7,7 +7,6 @@ from app.application.admin_service import DiskStat, UserAdminView
 from app.application.archive_service import ArchiveReport, ArchiveStats
 from app.application.backup_service import BackupEntry
 from app.application.maintenance_service import MaintenanceStats, ReconcileReport
-from app.domain.entities.user import User
 from app.domain.value_objects.role import Role
 
 
@@ -36,20 +35,6 @@ class UserAdminViewResponse(BaseModel):
 class UserListResponse(BaseModel):
     items: list[UserAdminViewResponse]
     total: int = Field(ge=0)
-
-
-class UpdateRoleRequest(BaseModel):
-    role: Role
-
-
-class UpdateRoleResponse(BaseModel):
-    user_id: UUID
-    email: str
-    role: Role
-
-    @classmethod
-    def from_user(cls, user: User) -> "UpdateRoleResponse":
-        return cls(user_id=user.id, email=user.email, role=user.role)
 
 
 class UpdatePrivateQuotaRequest(BaseModel):

@@ -40,10 +40,6 @@ export async function listUsers(params: ListUsersParams = {}): Promise<UserListR
   return data;
 }
 
-export async function updateUserRole(userId: string, role: string): Promise<void> {
-  await api.patch(`/api/admin/users/${userId}/role`, { role });
-}
-
 export async function updateUserPrivateQuota(
   userId: string,
   privateLimitGb: number,

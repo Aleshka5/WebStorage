@@ -22,11 +22,15 @@ Pagination, role filter, email search.
 ### US-ADM-02 — Change role
 STRANGER ↔ FAMILY ↔ ADMIN with confirmation UX as needed.
 
+**Successor:** [E-AUTHZ US-AUTHZ-07](../auth-service-roles/init.md) — HomeCloud admin shows `storage_roles` as **immutable text** (no `<select>`). Change roles only in Auth-Service admin. List is live via gRPC `ListUsers`.
+
 ### US-ADM-03 — Set private limit
 `private_limit_gb` persisted to quota table.
 
 ### US-ADM-04 — Block user
 Sets `is_active=false`.
+
+**Successor (E-AUTHZ):** account block must happen in Auth-Service (Validate returns `PermissionDenied` / `blocked`). Local `is_active` alone is not enough once sessions are hub-issued.
 
 ### US-ADM-05 — Delete user
 Removes user + storage cleanup.

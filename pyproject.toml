@@ -27,10 +27,13 @@ dependencies = [
     "python-multipart",
     "python-json-logger>=4.1.0",
     "aioboto3>=15.5.0",
+    "grpcio>=1.83.0",
+    "protobuf>=7.35.1",
 ]
 
 [dependency-groups]
 dev = [
+    "grpcio-tools>=1.83.0",
     "moto[s3,server]>=5.2.2",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,14 +8,16 @@ from app.application.admin_service import AdminService, DiskStat, UserAdminView
 from app.application.archive_service import ArchiveService
 from app.application.backup_service import BackupService
 from app.application.maintenance_service import MaintenanceService
+from app.application.ports.auth_validator import AuthValidator
 from app.domain.entities.user import User
-from app.domain.exceptions import SelfRoleChangeError, SelfUserDeletionError, UserNotFoundError
+from app.domain.exceptions import SelfUserDeletionError, UserNotFoundError
 from app.domain.value_objects.error_codes import ErrorCode
 from app.domain.value_objects.role import Role
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.disk_router import DiskRouter
 from app.presentation.dependencies.admin import get_admin_service, get_disk_router
 from app.presentation.dependencies.archive import get_archive_service
+from app.presentation.dependencies.auth import get_auth_validator
 from app.presentation.dependencies.backup import get_backup_service
 from app.presentation.dependencies.maintenance import get_maintenance_service
 from app.presentation.middleware.check_role import check_role
@@ -32,25 +34,48 @@ from app.presentation.schemas.admin import (
     StorageHealthResponse,
     StorageStatsResponse,
     UpdatePrivateQuotaRequest,
-    UpdateRoleRequest,
-    UpdateRoleResponse,
     UserAdminViewResponse,
     UserListResponse,
 )
+from config import get_settings
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+_ROLE_MANAGED_IN_AUTH_MESSAGE = "User roles are managed in Auth-Service"
+
+
+def _require_session_id(request: Request) -> str:
+    settings = get_settings()
+    session_id = request.cookies.get(settings.auth_grpc.cookie_name)
+    if not session_id:
+        logger.warning("Admin request missing session cookie after role check")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": ErrorCode.UNAUTHORIZED,
+                "message": "Authentication required",
+            },
+        )
+    return session_id
+
+
 @router.get("/users", response_model=UserListResponse)
 async def list_users(
+    request: Request,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
     role: Role | None = Query(default=None),
     email: str | None = Query(default=None, min_length=1, max_length=255),
     _admin: User = Depends(check_role(Role.ADMIN)),
+    auth_validator: AuthValidator = Depends(get_auth_validator),
     admin_service: AdminService = Depends(get_admin_service),
 ) -> UserListResponse:
+    session_id = _require_session_id(request)
+    settings = get_settings()
+    principals = await auth_validator.list_users(session_id, settings.auth_grpc.caller_host)
     result = await admin_service.list_users(
+        principals=principals,
         page=page,
         limit=limit,
         role_filter=role,
@@ -67,48 +92,47 @@ async def list_users(
     return UserListResponse(items=items, total=total)
 
 
-@router.patch("/users/{user_id}/role", response_model=UpdateRoleResponse)
+@router.patch("/users/{user_id}/role", status_code=status.HTTP_410_GONE)
 async def update_user_role(
     user_id: UUID,
-    body: UpdateRoleRequest,
-    admin: User = Depends(check_role(Role.ADMIN)),
-    admin_service: AdminService = Depends(get_admin_service),
-    session: AsyncSession = Depends(get_async_session),
-) -> UpdateRoleResponse:
-    try:
-        user = await admin_service.update_role(admin.id, user_id, body.role)
-        await session.commit()
-        return UpdateRoleResponse.from_user(user)
-    except SelfRoleChangeError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error_code": ErrorCode.ACCESS_DENIED,
-                "message": str(exc),
-            },
-        ) from exc
-    except UserNotFoundError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error_code": ErrorCode.USER_NOT_FOUND,
-                "message": str(exc),
-            },
-        ) from exc
+    _admin: User = Depends(check_role(Role.ADMIN)),
+) -> None:
+    logger.warning(
+        "Rejected role update for user {}: roles are managed in Auth-Service",
+        user_id,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "error_code": ErrorCode.ACCESS_DENIED,
+            "message": _ROLE_MANAGED_IN_AUTH_MESSAGE,
+        },
+    )
 
 
 @router.patch("/users/{user_id}/quota", status_code=status.HTTP_204_NO_CONTENT)
 async def update_user_private_quota(
+    request: Request,
     user_id: UUID,
     body: UpdatePrivateQuotaRequest,
     admin: User = Depends(check_role(Role.ADMIN)),
+    auth_validator: AuthValidator = Depends(get_auth_validator),
     admin_service: AdminService = Depends(get_admin_service),
     session: AsyncSession = Depends(get_async_session),
 ) -> None:
     try:
-        await admin_service.update_private_quota(admin.id, user_id, body.private_limit_gb)
+        session_id = _require_session_id(request)
+        settings = get_settings()
+        principals = await auth_validator.list_users(
+            session_id,
+            settings.auth_grpc.caller_host,
+        )
+        await admin_service.update_private_quota(
+            admin.id,
+            user_id,
+            body.private_limit_gb,
+            principals,
+        )
         await session.commit()
     except UserNotFoundError as exc:
         await session.rollback()
@@ -128,6 +152,9 @@ async def update_user_private_quota(
                 "message": str(exc),
             },
         ) from exc
+    except RuntimeError:
+        await session.rollback()
+        raise
 
 
 @router.post("/users/{user_id}/block", status_code=status.HTTP_204_NO_CONTENT)

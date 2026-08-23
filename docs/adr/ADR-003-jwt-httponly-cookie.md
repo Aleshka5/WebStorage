@@ -1,8 +1,8 @@
 # ADR-003: JWT in httpOnly cookie (not Bearer header)
 
-- **Status:** Accepted
+- **Status:** Accepted — **product JWT issuance superseded by [ADR-008](./ADR-008-auth-service-grpc-roles.md)** (session is Auth-Service `auth_session` + gRPC Validate). HttpOnly + credentialed cookies remain.
 - **Date:** 2026-06-01
-- **Related:** Auth routers, FE Axios `withCredentials: true`
+- **Related:** Auth routers, FE Axios `withCredentials: true`, [ADR-008](./ADR-008-auth-service-grpc-roles.md)
 
 ## Context
 
@@ -33,3 +33,7 @@ OAuth uses a short-lived Redis `ticket` to set the cookie after redirect.
 |---|---|
 | Bearer in memory | Lost on refresh; more FE complexity |
 | localStorage JWT | XSS steals session |
+
+## Follow-up (ADR-008)
+
+HomeCloud no longer mints `access_token`. The SPA still never reads the session cookie; API calls keep `withCredentials: true`. Product session cookie is Auth-Service `auth_session`.

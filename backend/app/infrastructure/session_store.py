@@ -1,9 +1,18 @@
+import hashlib
 from functools import lru_cache
 
 import redis.asyncio as aioredis
 from loguru import logger
 
 from config import get_settings
+
+_SESSION_REF_LENGTH = 12
+
+
+def session_ref(session_id: str) -> str:
+    """Short hash of a session id for logs. Never log the raw value."""
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:_SESSION_REF_LENGTH]
+
 
 _PRIVATE_KEY_PREFIX = "private_key:"
 _OAUTH_STATE_PREFIX = "oauth_state:"
@@ -26,19 +35,23 @@ class SessionStore:
     async def set_private_key(self, session_id: str, key: str, ttl: int) -> None:
         redis_key = f"{_PRIVATE_KEY_PREFIX}{session_id}"
         await self._redis.setex(redis_key, ttl, key)
-        logger.info("Stored private key for session {} with TTL {} seconds", session_id, ttl)
+        logger.info(
+            "Stored private key for session {} with TTL {} seconds",
+            session_ref(session_id),
+            ttl,
+        )
 
     async def get_private_key(self, session_id: str) -> str | None:
         redis_key = f"{_PRIVATE_KEY_PREFIX}{session_id}"
         value = await self._redis.get(redis_key)
         if value is None:
-            logger.warning("Private key not found for session {}", session_id)
+            logger.warning("Private key not found for session {}", session_ref(session_id))
         return value
 
     async def delete_private_key(self, session_id: str) -> None:
         redis_key = f"{_PRIVATE_KEY_PREFIX}{session_id}"
         await self._redis.delete(redis_key)
-        logger.info("Deleted private key for session {}", session_id)
+        logger.info("Deleted private key for session {}", session_ref(session_id))
 
     async def get_private_key_ttl(self, session_id: str) -> int:
         redis_key = f"{_PRIVATE_KEY_PREFIX}{session_id}"

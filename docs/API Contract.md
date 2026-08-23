@@ -2,7 +2,7 @@
 
 > **Status:** Active  
 > **Base URL:** `/api` (SPA proxies to backend)  
-> **Auth:** Cookie `access_token` (JWT, HttpOnly) unless noted  
+> **Auth:** Cookie `access_token` (JWT, HttpOnly) unless noted. **Planned (E-AUTHZ):** cookie `auth_session`; per-request gRPC Validate; see [auth-service-roles](./epics/auth-service-roles/init.md).  
 > **Error shape:** `{ "detail": { "error_code": "<CODE>", "message": "<text>", ... } }`  
 > **SSE:** None (downloads use `StreamingResponse` only)
 
@@ -34,6 +34,7 @@ Related: [Data Models.md](./Data%20Models.md), [Design Spec.md](./Design%20Spec.
 | `UNSUPPORTED_FORMAT` / `PATH_TRAVERSAL_DETECTED` | 400 |
 | `TOO_MANY_ATTEMPTS` | 429 (+ optional `retry_after`) |
 | `DISK_UNAVAILABLE` | 503 |
+| `AUTH_UNAVAILABLE` | 503 (Auth-Service gRPC down/timeout; **E-AUTHZ**) |
 | `INTERNAL_ERROR` | 500 |
 | `NOT_IMPLEMENTED` | 501 |
 
@@ -241,13 +242,13 @@ Note: TZ historically mentioned `total_bytes`; **implemented field is `limit_byt
 
 | Method | Path | Request | Success |
 |---|---|---|---|
-| `GET` | `/api/admin/users` | `page`, `limit` (1–100), optional `role`, `email` | `{ items: UserAdminView[], total }` |
-| `PATCH` | `/api/admin/users/{user_id}/role` | `{ "role": "STRANGER\|FAMILY\|ADMIN" }` | `{ user_id, email, role }` |
+| `GET` | `/api/admin/users` | `page`, `limit` (1–100), optional `role`, `email` | `{ items: UserAdminView[], total }` (`role` is live `storage_roles` from gRPC ListUsers; display-only; filters apply to live role/email) |
+| `PATCH` | `/api/admin/users/{user_id}/role` | — | **410 Gone** — roles are changed in Auth-Service `/admin` |
 | `PATCH` | `/api/admin/users/{user_id}/quota` | `{ "private_limit_gb": number ≥ 0 }` | `204` |
 | `POST` | `/api/admin/users/{user_id}/block` | — | `204` (`is_active=false`) |
 | `DELETE` | `/api/admin/users/{user_id}` | — | `204` |
 
-Errors: self role change / self delete → `403`; missing user → `404 USER_NOT_FOUND`.
+Errors: self delete → `403`; missing user → `404 USER_NOT_FOUND`. Role column is read-only; ListUsers outage → `503 AUTH_UNAVAILABLE` (no fallback to local `users.role`).
 
 **UserAdminView** (representative): `user_id`, `email`, `role`, `is_active`, `created_at`, usage/quota fields as returned by service.
 

@@ -1,7 +1,8 @@
 # Flow Spec — HomeCloud
 
 > **Status:** Active  
-> **Related:** [Product Brief.md](./Product%20Brief.md), [API Contract.md](./API%20Contract.md)
+> **Related:** [Product Brief.md](./Product%20Brief.md), [API Contract.md](./API%20Contract.md)  
+> **Auth (US-AUTHZ-09):** unauthenticated users redirect to Auth-Service Google OAuth (`return_to` = storage host), not in-app register/login. See [auth-service-roles](./epics/auth-service-roles/init.md).
 
 Describes user-visible flows, UI states, and interaction rules for Spec Driven implementation.
 
@@ -13,12 +14,14 @@ Describes user-visible flows, UI states, and interaction rules for Spec Driven i
 App mount
   → fetchMe()
   → loading spinner
+  → 503 AUTH_UNAVAILABLE → error + retry (no OAuth redirect)
   → authenticated? → AppLayout + requested route
-  → else → /auth (ProtectedRoute redirect)
+  → else → hub login URL (ProtectedRoute / RootRedirect)
 ```
 
 - Authed user visiting `/auth` → redirect `/files`.
-- Root `/` → `/files` if authed else `/auth`.
+- Guest visiting `/auth` → immediate hub OAuth (`VITE_AUTH_LOGIN_URL`), no local login page.
+- Root `/` → `/files` if authed else hub login URL.
 
 ### Layout states
 
@@ -36,35 +39,34 @@ Quota bar: `used_bytes` / `limit_bytes` from `GET /api/quota/me`. FAMILY/ADMIN l
 
 ## 2. Authentication Flows
 
-### 2.1 Register
+HomeCloud does not register or password-login. Session cookie `auth_session` is set by the Auth hub.
 
-1. User opens `/auth` → Register tab.
-2. Client validates email, password, password match.
-3. `POST /api/auth/register` → on success auto `POST /api/auth/login`.
-4. Navigate `/files`; load quota.
-5. Errors: `EMAIL_ALREADY_EXISTS` under email field; rate limit toast/message.
-
-### 2.2 Login
-
-1. Login tab → email/password.
-2. `POST /api/auth/login` → cookie set → `/files`.
-3. `INVALID_CREDENTIALS` on password field.
-
-### 2.3 Google OAuth
+### 2.1 Hub Google OAuth
 
 ```
-UI → GET /api/auth/google
-  → Google consent
-  → GET /api/auth/google/callback
-  → GET /api/auth/google/session?ticket=
-  → /files + cookie
+UI (ProtectedRoute / `/auth`)
+  → VITE_AUTH_LOGIN_URL
+    (default https://filenkov.store/oauth/google?return_to=https://storage.filenkov.store/)
+  → Google consent on hub
+  → cookie auth_session on .filenkov.store
+  → return_to storage
+  → GET /api/auth/me (Validate)
+  → /files
 ```
 
-First Google login creates `STRANGER` account (or links existing email per service rules).
+First Google login on the hub creates a `STRANGER` storage role (or links existing email per Auth-Service rules).
 
-### 2.4 Logout
+### 2.2 Session errors
 
-Profile menu → `POST /api/auth/logout` → clear local auth store → `/auth`.
+| Response | UI |
+|---|---|
+| 401 `UNAUTHORIZED` | Redirect to hub login URL once (not a local password form). Bootstrap `/me` 401 is handled by ProtectedRoute, not an interceptor loop. |
+| 401 `PRIVATE_SESSION_EXPIRED` | Re-open passphrase modal. **No** hub redirect. |
+| 503 `AUTH_UNAVAILABLE` | Explicit error + retry. **No** logout, **no** OAuth loop. |
+
+### 2.3 Logout
+
+Profile menu → `POST /api/auth/logout` (BFF) → clear local auth store → hub login URL.
 
 ---
 
@@ -137,9 +139,9 @@ Enter /private
 
 Any private API returns `401 PRIVATE_SESSION_EXPIRED`:
 
-- Keep main JWT session.
+- Keep product session (`auth_session`).
 - Re-open unlock modal (window event from axios interceptor).
-- Do not redirect to `/auth`.
+- Do not redirect to hub OAuth / login URL.
 
 ### Lock
 
@@ -157,8 +159,8 @@ Private header shows `private_bytes` / `private_limit_bytes`.
 
 | Action | Flow |
 |---|---|
-| List | Paginated; filter role; debounce email search |
-| Change role | Select → `PATCH .../role` |
+| List | Paginated after join/filter; filter chips by live `storage_roles`; debounce email search |
+| Role | Immutable text (Auth-Service `/admin`); `PATCH .../role` is 410 |
 | Private quota | Edit GB → blur → `PATCH .../quota` |
 | Block | Confirm → `POST .../block` |
 | Delete | Confirm → `DELETE ...` |
@@ -188,7 +190,8 @@ Ops endpoints (archive/backup/maintenance) exist on API; FE coverage optional �
 
 ### Auth session
 
-`anonymous` → (login/register/oauth) → `authenticated` → (logout / invalid cookie) → `anonymous`
+`anonymous` → (hub OAuth) → `authenticated` → (logout / invalid cookie) → `anonymous`  
+`authenticated` + 503 `AUTH_UNAVAILABLE` stays authenticated in UI until retry (no OAuth loop).
 
 ### Private vault
 

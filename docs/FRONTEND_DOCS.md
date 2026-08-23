@@ -37,7 +37,6 @@ frontend/
 │   │   ├── PrivateUnlockModal.tsx  ← модальное окно разблокировки
 │   │   └── ProtectedRoute.tsx      ← обёртка для защищённых маршрутов
 │   ├── pages/
-│   │   ├── AuthPage.tsx            ← вход / регистрация
 │   │   ├── PhotosPage.tsx          ← сетка фото + lightbox
 │   │   ├── FilesPage.tsx           ← файловый менеджер (plain)
 │   │   ├── PrivatePage.tsx         ← приватный раздел (encrypted)
@@ -55,7 +54,7 @@ frontend/
 │   │   ├── privateApi.ts           ← unlock / lock / quota
 │   │   └── adminApi.ts             ← пользователи, диски, архивы
 │   ├── store/
-│   │   ├── auth.ts                 ← auth state (user, login, register, logout)
+│   │   ├── auth.ts                 ← auth state (user, logout, fetchMe)
 │   │   └── quota.ts                ← quota state (used_bytes, limit_bytes)
 │   ├── types/
 │   │   ├── files.ts                ← FileNode, FileManagerMode, SortField
@@ -65,7 +64,8 @@ frontend/
 │       ├── validation.ts           ← validateEmail, validatePasswordMatch, validateFileName
 │       ├── photoUpload.ts          ← normalizePhotoFiles
 │       ├── id.ts                   ← generateId
-│       └── toast.ts                ← showSuccessToast, showErrorToast, showUploadProgressToast
+│       ├── toast.ts                ← showSuccessToast, showErrorToast, showUploadProgressToast
+│       └── authLogin.ts            ← VITE_AUTH_LOGIN_URL + однократный редирект на хаб
 ├── index.html
 ├── package.json
 ├── vite.config.ts
@@ -85,8 +85,8 @@ frontend/
 
 | Path | Component | Auth | Role |
 |---|---|---|---|
-| `/` | RootRedirect -> `/files` или `/auth` | auto | — |
-| `/auth` | AuthPage | no | — |
+| `/` | RootRedirect -> `/files` или login URL хаба | auto | — |
+| `/auth` | Сразу login URL хаба (авторизованный → `/files`) | no | — |
 | `/files` | FilesPage (`FileManager mode=plain`) | yes | all |
 | `/photos` | PhotosPage | yes | all |
 | `/private` | PrivatePage (`FileManager mode=encrypted`) | yes | all |
@@ -97,21 +97,27 @@ frontend/
 
 1. `AppRouter()` вызывает `useAuthStore.fetchMe()` при монтировании.
 2. Пока fetchMe не завершён — показывается лоадер (спиннер).
-3. Если пользователь авторизован: `ProtectedRoute` пропускает в `AppLayout`.
-4. Если не авторизован: `ProtectedRoute` редиректит на `/auth`.
-5. `AuthRoute` для неавторизованных — показывает форму входа/регистрации.
+3. `GET /api/auth/me` 503 `AUTH_UNAVAILABLE` — экран ошибки с кнопкой «Повторить», без редиректа на OAuth.
+4. Если пользователь авторизован: `ProtectedRoute` пропускает в `AppLayout`.
+5. Если не авторизован: `ProtectedRoute` / `RootRedirect` делают `window.location` на login URL хаба (не форма пароля).
 6. Авторизованный пользователь на `/auth` редиректится на `/files`.
+7. Гость на `/auth` сразу уходит на `VITE_AUTH_LOGIN_URL` (локальной страницы входа нет).
 
-### Google OAuth flow
+Cookie сессии — HttpOnly `auth_session`; фронт её не читает. Axios `withCredentials: true`.
+
+### Google OAuth flow (Auth-Service hub)
 
 ```
-Фронт -> GET /api/auth/google -> 307 -> Google Auth
-Google -> 307 -> GET /api/auth/google/callback?code=&state=
-Сервер -> 307 -> GET /api/auth/google/session?ticket=
-Сервер -> 307 -> /files + httpOnly cookie
+Неавторизованный пользователь
+  → ProtectedRoute / `/auth`
+  → VITE_AUTH_LOGIN_URL (по умолчанию
+     https://filenkov.store/oauth/google?return_to=https://storage.filenkov.store/)
+  → Google consent на хабе
+  → cookie auth_session (.filenkov.store)
+  → return_to → storage → GET /api/auth/me
 ```
 
-Фронт не хранит JWT — всё через httpOnly cookie.
+Фронт не хранит JWT и не вызывает `/api/auth/login` / `/api/auth/register`.
 
 ---
 
@@ -131,19 +137,16 @@ interface User {
 interface AuthState {
   user: User | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  authUnavailable: boolean;
   logout: () => Promise<void>;
   fetchMe: () => Promise<void>;
 }
 ```
 
-`register` сначала создаёт аккаунт (POST /api/auth/register), затем автоматически
-логинится (POST /api/auth/login) и устанавливает user в состояние.
+`fetchMe` — bootstrap через `GET /api/auth/me` (`user_id`, `email`, `role` = HomeCloud `storage_roles`).
+401 → `user = null` (далее ProtectedRoute отправит на хаб). 503 → `authUnavailable`, user не сбрасывается в OAuth-цикл.
 
-`mapAuthError` преобразует ошибки API в `AuthError` с полем и кодом ошибки:
-- EMAIL_ALREADY_EXISTS -> field="email"
-- INVALID_CREDENTIALS -> field="password"
+`logout` — `POST /api/auth/logout` (BFF), затем редирект на login URL хаба.
 
 ### Quota Store
 
@@ -171,9 +174,11 @@ interface QuotaState {
 ### api.ts — Базовый axios instance
 
 - `baseURL` из `import.meta.env.VITE_API_BASE_URL` (пусто -> относительные пути)
-- `withCredentials: true` — cookie передаются автоматически
-- **Interceptor**: при 401 с `detail.error_code === "PRIVATE_SESSION_EXPIRED"`
-  диспатчит кастомное событие `homecloud:private-session-expired` на window.
+- `withCredentials: true` — cookie (`auth_session`) передаются автоматически
+- **Interceptor**:
+  - 401 `PRIVATE_SESSION_EXPIRED` — только событие `homecloud:private-session-expired` (без редиректа на хаб)
+  - 401 `UNAUTHORIZED` (прочие) — не трогает bootstrap `GET /api/auth/me`; на защищённой странице однократный редирект на login URL
+  - 503 `AUTH_UNAVAILABLE` — `Promise.reject`, без logout и без OAuth-редиректа
 
 ```typescript
 // API Error detail
@@ -247,7 +252,7 @@ CSS Grid/Flex: `h-screen`, `bg-zinc-950`. Outlet рендерит дочерни
 - Слева: логотип "HomeCloud"
 - Справа: иконка пользователя (UserCircle) -> dropdown с email и кнопкой "Выйти"
 - Dropdown закрывается по клику вне области (mousedown listener)
-- Logout -> POST /api/auth/logout -> navigate /auth
+- Logout -> POST /api/auth/logout -> redirect на login URL хаба
 
 #### Sidebar
 
@@ -420,7 +425,7 @@ Upload progress panel below the FAB (fixed position).
 
 Файл: `src/components/ProtectedRoute.tsx`
 
-Simple guard: если user === null -> Navigate /auth, иначе children.
+Simple guard: если user === null -> однократный `window.location` на login URL хаба, иначе children.
 
 ### UI Components
 
@@ -465,6 +470,7 @@ INTERNAL_ERROR: "Произошла ошибка. Попробуйте позж�
 UNSUPPORTED_FORMAT: "Неподдерживаемый формат файла"
 PATH_TRAVERSAL_DETECTED: "Недопустимый путь к файлу"
 UNAUTHORIZED: "Требуется авторизация"
+AUTH_UNAVAILABLE: "Сервис авторизации временно недоступен. Попробуйте позже"
 INVALID_CREDENTIALS: "Неверный email или пароль"
 EMAIL_ALREADY_EXISTS: "Пользователь с таким email уже существует"
 NOT_IMPLEMENTED: "Функция пока недоступна"
@@ -478,16 +484,9 @@ NOT_IMPLEMENTED: "Функция пока недоступна"
 
 ### Pages
 
-#### AuthPage
+#### `/auth`
 
-Файл: `src/pages/AuthPage.tsx`
-
-Два таба (Вход / Регистрация) с формами:
-- Login: email + password -> login() -> navigate /files
-- Register: email + password + confirm -> register() -> auto-login -> navigate /files
-- Google OAuth button: window.location.href = "/api/auth/google"
-- Client-side validation: email format, required fields, password match
-- Server-side errors mapped to fields via AuthError
+Локальной страницы входа нет (US-AUTHZ-09). Гость сразу уходит на `VITE_AUTH_LOGIN_URL`; авторизованный пользователь — на `/files`.
 
 #### PhotosPage
 
@@ -647,6 +646,18 @@ showUploadProgressToast(id, name, progress: number): void
 dismissToast(id: string): void
 ```
 
+### authLogin.ts
+
+Файл: `src/utils/authLogin.ts`
+
+```typescript
+DEFAULT_AUTH_LOGIN_URL: string  // совпадает с backend AUTH_LOGIN_URL
+getAuthLoginUrl(): string       // import.meta.env.VITE_AUTH_LOGIN_URL ?? default
+isProtectedAppPath(pathname: string): boolean
+shouldRedirectToHubOnUnauthorized(status, errorCode, requestUrl, pathname): boolean
+redirectToAuthLogin(): void     // window.location.assign, один раз за загрузку страницы
+```
+
 ---
 
 ## CSS / Styling
@@ -669,6 +680,7 @@ dismissToast(id: string): void
 Файл: `frontend/vite.config.ts`
 - React plugin (@vitejs/plugin-react)
 - Base path configured for Nginx
+- `VITE_AUTH_LOGIN_URL` (optional) — hub OAuth URL; default matches backend `AUTH_LOGIN_URL`
 
 ### Nginx Config
 

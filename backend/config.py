@@ -83,6 +83,53 @@ class AuthSettings(BaseSettings):
     )
 
 
+class AuthGrpcSettings(BaseSettings):
+    """Auth-Service gRPC client settings (US-AUTHZ-03). JWT/Google stay on AuthSettings."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    addr: str = Field(
+        default="api:9090",
+        validation_alias="AUTH_GRPC_ADDR",
+        description=(
+            "gRPC dial target for Auth-Service (compose DNS or host). "
+            "Do not publish port 9090 on the public host."
+        ),
+    )
+    caller_host: str = Field(
+        default="storage.filenkov.store",
+        validation_alias="AUTH_CALLER_HOST",
+        description=(
+            "Caller host sent to Auth-Service Validate. Must match the Auth-Service "
+            "whitelist key after scheme, port, and path are stripped "
+            "(e.g. https://storage.filenkov.store:443/files → storage.filenkov.store)."
+        ),
+    )
+    cookie_name: str = Field(
+        default="auth_session",
+        validation_alias="AUTH_COOKIE_NAME",
+        description="Browser cookie name; must match Auth-Service COOKIE_NAME.",
+    )
+    timeout_ms: int = Field(
+        default=2000,
+        validation_alias="AUTH_GRPC_TIMEOUT_MS",
+        description="Per-request gRPC deadline in milliseconds.",
+    )
+    login_url: str = Field(
+        default="https://filenkov.store/oauth/google?return_to=https://storage.filenkov.store/",
+        validation_alias="AUTH_LOGIN_URL",
+        description="Hub Google OAuth URL for unauthenticated browser redirect.",
+    )
+    logout_url: str = Field(
+        default="http://api:8080",
+        validation_alias="AUTH_LOGOUT_URL",
+        description=(
+            "LAN origin of Auth-Service HTTP for BFF logout (US-AUTHZ-06). "
+            "Do not call hub logout from the SPA (no CORS)."
+        ),
+    )
+
+
 class BusinessLogicSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -116,6 +163,7 @@ class Settings:
         self.storage = StorageSettings()
         self.s3 = S3Settings()
         self.auth = AuthSettings()
+        self.auth_grpc = AuthGrpcSettings()
         self.business_logic = BusinessLogicSettings()
         self.admin = AdminSettings()
         self.logging = LoggingSettings()

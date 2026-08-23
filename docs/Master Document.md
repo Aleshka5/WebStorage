@@ -41,7 +41,7 @@ HomeCloud is a Docker-deployable home cloud that gives a family (and invited str
 | Backend | Python 3.12 + FastAPI (Clean Architecture) |
 | Frontend | React 18 + TypeScript + Vite + Tailwind |
 | Data | PostgreSQL 16 (metadata), filesystem (blobs), Redis (sessions/cache) |
-| Auth | Email/password + Google OAuth; JWT in httpOnly cookie |
+| Auth | Email/password + Google OAuth; JWT in httpOnly cookie. **Planned (E-AUTHZ):** Google via Auth-Service; cookie `auth_session`; roles from gRPC `storage_roles`. |
 | Roles | `STRANGER`, `FAMILY`, `ADMIN` |
 | Sections | Photos, Files, Private (encrypted), Shared, Admin |
 | Deploy | Docker Compose; optional Kubernetes |
@@ -56,7 +56,7 @@ HomeCloud is a Docker-deployable home cloud that gives a family (and invited str
 | Own photos / files / private | ✅ | ✅ | ✅ |
 | Shared folder | ❌ | ✅ | ✅ |
 | Admin panel | ❌ | ❌ | ✅ |
-| Change roles / private quotas | ❌ | ❌ | ✅ |
+| Change roles / private quotas | ❌ | ❌ | ✅ (roles: Auth-Service after E-AUTHZ; private quota stays HomeCloud) |
 
 **Quotas**
 
@@ -112,7 +112,7 @@ Metadata lives in PostgreSQL (`users`, `file_records`, `user_quota_usage`). Blob
 
 | Concern | Behavior |
 |---|---|
-| Auth session | JWT HS256 in cookie `access_token`; TTL `SESSION_TTL_SECONDS` |
+| Auth session | JWT HS256 in cookie `access_token`; TTL `SESSION_TTL_SECONDS`. **Planned (E-AUTHZ):** Auth-Service Redis session cookie `auth_session`; Validate on every request; TTL = Auth-Service `SESSION_TTL`. |
 | Private session | Derived AES key in Redis; TTL `PRIVATE_SESSION_TTL_HOURS` (sliding); expired → `PRIVATE_SESSION_EXPIRED` without full logout |
 | Upload lifecycle | `PENDING` → commit → `COMMITTED`; stale PENDING (>1h) cleaned by job |
 | Archiving | Daily zstd for files idle > `ARCHIVE_DAYS_THRESHOLD` days; transparent read |

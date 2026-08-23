@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import {
@@ -7,7 +7,6 @@ import {
   getStorageStats,
   listUsers,
   updateUserPrivateQuota,
-  updateUserRole,
   type DiskStat,
   type UserAdminView,
 } from "../services/adminApi";
@@ -163,7 +162,6 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [disks, setDisks] = useState<DiskStat[]>([]);
   const [storageLoading, setStorageLoading] = useState(true);
-  const roleSnapshots = useRef<Record<string, string>>({});
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -186,9 +184,6 @@ export default function AdminPage() {
       });
       setUsers(data.items);
       setTotal(data.total);
-      for (const user of data.items) {
-        roleSnapshots.current[user.id] = user.role;
-      }
     } catch {
       setError("Не удалось загрузить список пользователей");
     } finally {
@@ -221,40 +216,6 @@ export default function AdminPage() {
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  const handleRoleChange = async (user: UserAdminView, newRole: string) => {
-    const previousRole = roleSnapshots.current[user.id] ?? user.role;
-    if (newRole === previousRole) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Изменить роль пользователя ${user.email} с ${previousRole} на ${newRole}?`,
-    );
-    if (!confirmed) {
-      setUsers((current) =>
-        current.map((item) =>
-          item.id === user.id ? { ...item, role: previousRole } : item,
-        ),
-      );
-      return;
-    }
-
-    try {
-      await updateUserRole(user.id, newRole);
-      roleSnapshots.current[user.id] = newRole;
-      setUsers((current) =>
-        current.map((item) => (item.id === user.id ? { ...item, role: newRole } : item)),
-      );
-    } catch {
-      setUsers((current) =>
-        current.map((item) =>
-          item.id === user.id ? { ...item, role: previousRole } : item,
-        ),
-      );
-      window.alert("Не удалось изменить роль пользователя");
-    }
-  };
 
   const handleBlock = async (user: UserAdminView) => {
     if (!user.is_active) {
@@ -341,7 +302,12 @@ export default function AdminPage() {
             <thead className="bg-zinc-900/80">
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">Email</th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">Роль</th>
+                <th className="px-4 py-3 text-left font-medium text-zinc-400">
+                  Роль
+                  <span className="mt-0.5 block text-xs font-normal text-zinc-500">
+                    меняется в Auth-Service /admin
+                  </span>
+                </th>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">Статус</th>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">Занято</th>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">
@@ -369,26 +335,7 @@ export default function AdminPage() {
                   <tr key={user.id} className="hover:bg-zinc-900/40">
                     <td className="px-4 py-3 text-zinc-100">{user.email}</td>
                     <td className="px-4 py-3">
-                      <select
-                        value={user.role}
-                        disabled={user.id === currentUser.user_id}
-                        onChange={(event) => {
-                          const newRole = event.target.value;
-                          setUsers((current) =>
-                            current.map((item) =>
-                              item.id === user.id ? { ...item, role: newRole } : item,
-                            ),
-                          );
-                          void handleRoleChange(user, newRole);
-                        }}
-                        className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500/50 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {ROLES.map((role) => (
-                          <option key={role} value={role}>
-                            {role}
-                          </option>
-                        ))}
-                      </select>
+                      <span className="text-zinc-100">{user.role}</span>
                     </td>
                     <td className="px-4 py-3">
                       <span

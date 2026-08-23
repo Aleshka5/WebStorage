@@ -16,6 +16,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   UNSUPPORTED_FORMAT: "Неподдерживаемый формат файла",
   PATH_TRAVERSAL_DETECTED: "Недопустимый путь к файлу",
   UNAUTHORIZED: "Требуется авторизация",
+  AUTH_UNAVAILABLE: "Сервис авторизации временно недоступен. Попробуйте позже",
   INVALID_CREDENTIALS: "Неверный email или пароль",
   EMAIL_ALREADY_EXISTS: "Пользователь с таким email уже существует",
   NOT_IMPLEMENTED: "Функция пока недоступна",

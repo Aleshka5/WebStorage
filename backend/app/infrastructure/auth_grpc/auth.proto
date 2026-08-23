@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "github.com/aleshka5/auth-service/pkg/authpb";
+
+// Auth is the internal LAN validation API. Product services extract the
+// auth_session cookie and call Validate on every request (no caller-side cache).
+// ListUsers is a read-only admin listing using the same whitelist projection.
+service Auth {
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+}
+
+message ValidateRequest {
+  string session_id = 1;
+  string caller_host = 2;
+}
+
+message ValidateResponse {
+  // Whitelist-projected user fields for caller_host (e.g. name, storage_roles).
+  map<string, string> fields = 1;
+}
+
+message ListUsersRequest {
+  string session_id = 1;
+  string caller_host = 2;
+}
+
+message ListUser {
+  // Same whitelist projection as Validate for the request caller_host.
+  map<string, string> fields = 1;
+}
+
+message ListUsersResponse {
+  repeated ListUser users = 1;
+}

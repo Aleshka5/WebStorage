@@ -1,16 +1,17 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from loguru import logger
 
+from app.domain.entities.auth_principal import AuthPrincipal
 from app.domain.entities.file_record import FileRecord, FileSection
 from app.domain.entities.user import User
 from app.domain.exceptions import SelfRoleChangeError, SelfUserDeletionError, UserNotFoundError
 from app.domain.value_objects.role import Role
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
-from app.infrastructure.database.repositories.user_repo import UserRepository
+from app.infrastructure.database.repositories.user_repo import UserAdminRow, UserRepository
 from app.infrastructure.disk_router import DiskRouter
 from app.infrastructure.storage.s3_adapter import build_disk_root_adapter
 from config import Settings, get_settings
@@ -56,37 +57,77 @@ class AdminService:
 
     async def list_users(
         self,
+        principals: list[AuthPrincipal],
         page: int,
         limit: int,
         role_filter: Role | None = None,
         email_search: str | None = None,
     ) -> dict[str, object]:
         logger.info(
-            "Admin listing users: page={}, limit={}, role_filter={}, email_search={}",
+            "Admin listing users from Auth ListUsers: count={}, page={}, limit={}, role_filter={}",
+            len(principals),
             page,
             limit,
             role_filter.value if role_filter else None,
-            email_search,
         )
-        rows, total = await self._user_repo.list_for_admin(
-            page=page,
-            limit=limit,
-            role_filter=role_filter,
-            email_search=email_search,
+        filtered = self._filter_principals(principals, role_filter, email_search)
+        total = len(filtered)
+        offset = (page - 1) * limit
+        page_principals = filtered[offset : offset + limit]
+        local_rows = await self._user_repo.get_admin_rows_by_ids(
+            [principal.id for principal in page_principals]
         )
         items = [
-            UserAdminView(
-                id=row.user.id,
-                email=row.user.email,
-                role=row.user.role,
-                is_active=row.user.is_active,
-                created_at=row.user.created_at,
-                quota_used_bytes=row.quota_used_bytes,
-                private_limit_bytes=row.private_limit_bytes,
-            )
-            for row in rows
+            self._view_from_principal(principal, local_rows.get(principal.id))
+            for principal in page_principals
         ]
+        logger.info(
+            "Admin user list joined live roles with local quota: page_items={}, total={}",
+            len(items),
+            total,
+        )
         return {"items": items, "total": total}
+
+    @staticmethod
+    def _filter_principals(
+        principals: list[AuthPrincipal],
+        role_filter: Role | None,
+        email_search: str | None,
+    ) -> list[AuthPrincipal]:
+        filtered = principals
+        if role_filter is not None:
+            filtered = [principal for principal in filtered if principal.role == role_filter]
+        if email_search:
+            needle = email_search.casefold()
+            filtered = [
+                principal for principal in filtered if needle in principal.email.casefold()
+            ]
+        return filtered
+
+    @staticmethod
+    def _view_from_principal(
+        principal: AuthPrincipal,
+        local: UserAdminRow | None,
+    ) -> UserAdminView:
+        if local is None:
+            return UserAdminView(
+                id=principal.id,
+                email=principal.email,
+                role=principal.role,
+                is_active=True,
+                created_at=datetime.now(UTC),
+                quota_used_bytes=0,
+                private_limit_bytes=0,
+            )
+        return UserAdminView(
+            id=principal.id,
+            email=principal.email,
+            role=principal.role,
+            is_active=local.user.is_active,
+            created_at=local.user.created_at,
+            quota_used_bytes=local.quota_used_bytes,
+            private_limit_bytes=local.private_limit_bytes,
+        )
 
     async def update_role(
         self,
@@ -117,6 +158,7 @@ class AdminService:
         admin_id: UUID,
         target_user_id: UUID,
         limit_gb: float,
+        principals: list[AuthPrincipal],
     ) -> None:
         if limit_gb < 0:
             raise ValueError("Private quota limit cannot be negative")
@@ -130,10 +172,27 @@ class AdminService:
             limit_bytes,
         )
 
-        user = await self._user_repo.get_by_id(target_user_id)
-        if user is None:
-            logger.error("User {} not found for private quota update", target_user_id)
+        principal = next(
+            (item for item in principals if item.id == target_user_id),
+            None,
+        )
+        if principal is None:
+            logger.error(
+                "User {} not found in Auth ListUsers for private quota update",
+                target_user_id,
+            )
             raise UserNotFoundError(f"User {target_user_id} not found")
+
+        user = await self._user_repo.upsert_from_principal(principal)
+        if user is None:
+            logger.error(
+                "Cannot project user {} for private quota update "
+                "(email/UUID conflict; US-AUTHZ-11)",
+                target_user_id,
+            )
+            raise RuntimeError(
+                f"Cannot project user {target_user_id} for private quota update"
+            )
 
         await self._quota_repo.update_private_limit(target_user_id, limit_bytes)
         logger.info(

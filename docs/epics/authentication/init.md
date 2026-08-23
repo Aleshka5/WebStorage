@@ -1,7 +1,7 @@
 # Epic: Authentication & Sessions
 
 > **ID:** E-AUTH  
-> **Status:** Implemented (gap: password reset)  
+> **Status:** Implemented (gap: password reset) — **product session/roles superseded by [E-AUTHZ](../auth-service-roles/init.md)**  
 > **Specs:** [Flow Spec §2](../../Flow%20Spec.md), [API Contract §3](../../API%20Contract.md), [ADR-003](../../adr/ADR-003-jwt-httponly-cookie.md)
 
 ## Overview
@@ -42,3 +42,7 @@ Enable users to register, log in (password or Google), maintain JWT cookie sessi
 - [x] FE AuthPage field errors mapped.
 - [ ] Password reset per TZ.
 - [ ] Tests per [Test Spec](../../Test%20Spec.md) for auth happy/negative paths.
+
+## Successor
+
+Do **not** extend local JWT/password auth. Session cookie, Google login, and **role source of truth** move to Auth-Service in [E-AUTHZ](../auth-service-roles/init.md) (`storage_roles` via gRPC `Validate` on every request). Password reset, if still required, belongs on the Auth hub — not a new HomeCloud mailer.

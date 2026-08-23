@@ -1,4 +1,5 @@
 from fastapi import Depends, HTTPException, Request, status
+from loguru import logger
 
 from app.application.file_service import FileService
 from app.application.private_service import PrivateService
@@ -7,18 +8,16 @@ from app.domain.value_objects.error_codes import ErrorCode
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.session_store import SessionStore, get_session_store
-from app.presentation.dependencies.auth import (
-    ACCESS_TOKEN_COOKIE,
-    get_current_user,
-    get_quota_repository,
-)
+from app.presentation.dependencies.auth import get_current_user, get_quota_repository
 from app.presentation.dependencies.files import get_file_repository
 from config import get_settings
 
 
 def _get_session_id(request: Request) -> str:
-    token = request.cookies.get(ACCESS_TOKEN_COOKIE)
+    cookie_name = get_settings().auth_grpc.cookie_name
+    token = request.cookies.get(cookie_name)
     if not token:
+        logger.warning("Private vault requested without session cookie")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={

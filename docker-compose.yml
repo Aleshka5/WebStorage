@@ -7,6 +7,13 @@ services:
       - "192.168.1.103:8000:8000"
     env_file:
       - .env
+    # Auth-Service gRPC (US-AUTHZ-10). Dial AUTH_GRPC_ADDR (default api:9090).
+    # Auth-Service compose exposes 9090 only on its internal `auth` network — do NOT
+    # publish 9090 on the public host. Keep `default` so db/redis/minio still resolve.
+    # AUTH_CALLER_HOST is the whitelist identity, not a dial target.
+    networks:
+      - default
+      - auth
     volumes:
       - ./backend:/app
       - /media/aleksey/HardDisk/storage:/storage/disk1
@@ -93,3 +100,17 @@ volumes:
   minio_data:
   caddy_data:
   caddy_config:
+
+# Join Auth-Service's compose network so `app` can dial AUTH_GRPC_ADDR=api:9090.
+# podman-compose requires every service network to be declared here — including
+# `default` (db/redis/minio/frontend). Do not omit it or `down`/`up` fail to parse.
+# Auth-Service (`deploy/docker-compose.yml`) names that network `{project}_auth`.
+# Started from Auth-Service/deploy → deploy_auth (current homelab).
+# Started from the Auth-Service repo root → auth-service_auth.
+# Override with AUTH_DOCKER_NETWORK if `podman network ls` / `docker network ls` differs.
+# Do not add a host port mapping for 9090 here.
+networks:
+  default: {}
+  auth:
+    external: true
+    name: ${AUTH_DOCKER_NETWORK:-deploy_auth}

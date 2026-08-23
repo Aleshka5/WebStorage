@@ -48,3 +48,23 @@ class SelfRoleChangeError(Exception):
 
 class SelfUserDeletionError(Exception):
     """Raised when an admin attempts to delete their own account."""
+
+
+class AuthUnauthenticatedError(Exception):
+    """Raised when Auth-Service rejects the session (unauthenticated / invalid argument)."""
+
+
+class AuthBlockedError(Exception):
+    """Raised when Auth-Service reports the caller is blocked."""
+
+
+class AuthAccessDeniedError(Exception):
+    """Raised when Auth-Service denies access (unknown host, not admin, etc.)."""
+
+
+class AuthUnavailableError(Exception):
+    """Raised when Auth-Service is unreachable or the gRPC deadline is exceeded."""
+
+
+class AuthMisconfiguredError(Exception):
+    """Raised when Auth-Service fields cannot be mapped (missing id / invalid role)."""

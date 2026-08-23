@@ -3,8 +3,10 @@ from uuid import UUID
 
 from loguru import logger
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.entities.auth_principal import AuthPrincipal
 from app.domain.entities.user import User as UserEntity
 from app.domain.value_objects.role import Role
 from app.infrastructure.database.models import User as UserModel
@@ -43,6 +45,74 @@ class UserRepository:
         model = await self._session.get(UserModel, user_id)
         if model is None:
             return None
+        return self._to_entity(model)
+
+    async def upsert_from_principal(self, principal: AuthPrincipal) -> UserEntity | None:
+        """Project Auth-Service identity into the local users table.
+
+        Authorization must use ``principal.role`` on the returned request User,
+        not the persisted column. Returns None when email belongs to a different
+        UUID (US-AUTHZ-11 migration); callers must not silent-remap.
+        """
+        existing = await self.get_by_id(principal.id)
+        if existing is not None:
+            return await self._sync_projection(principal)
+
+        email_owner = await self.get_by_email(principal.email)
+        if email_owner is not None:
+            logger.error(
+                "Auth principal user_id={} email conflicts with local user_id={} "
+                "(migration is US-AUTHZ-11); not remapping",
+                principal.id,
+                email_owner.id,
+            )
+            return None
+
+        model = UserModel(
+            id=principal.id,
+            email=principal.email,
+            password_hash=None,
+            google_id=None,
+            role=UserRole(principal.role.value),
+            is_active=True,
+        )
+        try:
+            async with self._session.begin_nested():
+                self._session.add(model)
+                await self._session.flush()
+        except IntegrityError:
+            logger.error(
+                "Auth principal user_id={} could not be inserted due to a unique "
+                "constraint (migration is US-AUTHZ-11); not remapping",
+                principal.id,
+            )
+            return None
+
+        await self._session.refresh(model)
+        logger.info(
+            "Created local user projection user_id={} role={}",
+            model.id,
+            model.role.value,
+        )
+        return self._to_entity(model)
+
+    async def _sync_projection(self, principal: AuthPrincipal) -> UserEntity:
+        model = await self._session.get(UserModel, principal.id)
+        if model is None:
+            logger.error("User {} disappeared during Auth projection sync", principal.id)
+            raise RuntimeError(f"User {principal.id} not found during projection sync")
+
+        if model.role != UserRole(principal.role.value):
+            model.role = UserRole(principal.role.value)
+        if not model.is_active:
+            model.is_active = True
+        await self._session.flush()
+        await self._session.refresh(model)
+        logger.info(
+            "Updated local user projection user_id={} role={}",
+            model.id,
+            model.role.value,
+        )
         return self._to_entity(model)
 
     async def create(
@@ -97,6 +167,26 @@ class UserRepository:
         await self._session.refresh(model)
         logger.info("Updated active status for user {} to {}", user_id, is_active)
         return self._to_entity(model)
+
+    async def get_admin_rows_by_ids(self, user_ids: list[UUID]) -> dict[UUID, UserAdminRow]:
+        if not user_ids:
+            return {}
+
+        stmt = (
+            select(UserModel, UserQuotaUsage)
+            .outerjoin(UserQuotaUsage, UserQuotaUsage.user_id == UserModel.id)
+            .where(UserModel.id.in_(user_ids))
+        )
+        result = await self._session.execute(stmt)
+        rows: dict[UUID, UserAdminRow] = {}
+        for user_model, quota_model in result.all():
+            rows[user_model.id] = UserAdminRow(
+                user=self._to_entity(user_model),
+                quota_used_bytes=quota_model.total_bytes if quota_model else 0,
+                private_limit_bytes=quota_model.private_limit_bytes if quota_model else 0,
+            )
+        logger.info("Loaded {} local admin projections for {} auth users", len(rows), len(user_ids))
+        return rows
 
     async def list_for_admin(
         self,

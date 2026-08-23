@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { UserCircle } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
+import { redirectToAuthLogin } from "../../utils/authLogin";
 
 export function Header() {
-  const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -28,7 +27,7 @@ export function Header() {
   const handleLogout = async () => {
     setMenuOpen(false);
     await logout();
-    navigate("/auth", { replace: true });
+    redirectToAuthLogin();
   };
 
   return (

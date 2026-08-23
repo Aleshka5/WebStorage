@@ -189,6 +189,74 @@ uv run python scripts/migrate_fs_to_s3.py --verify-only
 
 ---
 
+## Auth-Service gRPC
+
+HomeCloud authenticates via the Auth hub (Google OAuth2, cookie `auth_session`) and calls gRPC `Validate` on every protected request. gRPC is Docker-internal only: `app` joins the Auth-Service `auth` network and dials `AUTH_GRPC_ADDR=api:9090`. Do not publish port 9090 on the host.
+
+`AUTH_CALLER_HOST` is the **whitelist identity** sent inside `Validate` (after scheme/port/path strip). It is not the gRPC dial target. A log line with `caller_host=storage.filenkov.store grpc_code=UNAVAILABLE` means the channel to `AUTH_GRPC_ADDR` is down, not that the app tried to connect to that public hostname.
+
+### Environment variables
+
+See `.env.example`. JWT/Google vars stay until later stories retire local product sessions.
+
+| Variable | Default | Description |
+|---|---|---|
+| `AUTH_GRPC_ADDR` | `api:9090` | Dial target from the `app` container (Auth-Service compose DNS) |
+| `AUTH_CALLER_HOST` | `storage.filenkov.store` | Must match the Auth-Service whitelist **after** scheme/port/path strip |
+| `AUTH_COOKIE_NAME` | `auth_session` | Must match Auth-Service `COOKIE_NAME` |
+| `AUTH_GRPC_TIMEOUT_MS` | `2000` | Per-request gRPC deadline |
+| `AUTH_LOGIN_URL` | hub Google OAuth with `return_to=https://storage.filenkov.store/` | Unauthenticated browser redirect; `return_to` host must be on the hub whitelist |
+| `AUTH_LOGOUT_URL` | `http://api:8080` | LAN origin of Auth-Service HTTP for a later BFF logout |
+| `AUTH_DOCKER_NETWORK` | `deploy_auth` | External compose network `{project}_auth`. From `Auth-Service/deploy` → `deploy_auth`; from the Auth-Service repo root → `auth-service_auth`. Confirm with `podman network ls` / `docker network ls`. |
+
+### Cookie, network, Validate
+
+- Cookie **domain** in production is `.filenkov.store` so `storage.filenkov.store` receives `auth_session`.
+- gRPC is **internal only**. Auth-Service compose `expose`s `9090` but does not publish it (`0.0.0.0:8082->8080/tcp, 9090/tcp` means HTTP is on the host; gRPC is not). `app` attaches to `AUTH_DOCKER_NETWORK` so DNS name `api` resolves. Recreate `app` after changing networks (`podman compose up -d app` / `docker compose up -d app`).
+- **No Validate cache** in WebStorage: session revoke / role change / block must take effect on the next request.
+- Login `return_to` must be an exact whitelist host (`storage.filenkov.store` in prod).
+
+### DEV caveat (localhost whitelist)
+
+With Auth-Service `AUTH_DEV_HTTP=true`, `localhost` / `127.0.0.1` are copied from **hub** fields (`google_email`, `name`, `roles`), **not** storage fields (`id`, `storage_roles`). Local Validate as `AUTH_CALLER_HOST=localhost` will not get FAMILY/`id`. Either:
+
+- keep `AUTH_CALLER_HOST=storage.filenkov.store` (and send that host / Caddy `Host` header), or
+- set Auth-Service `WHITELIST_JSON` so `localhost` projects storage fields (`id`, `google_email`, `name`, `storage_roles`).
+
+### Migrate HomeCloud users to Auth-Service UUIDs
+
+One-shot operator tool (US-AUTHZ-11 / ADR-008): match local `users.email` to Auth `google_email` and rewrite the local UUID so `users/{user_id}/` prefixes, `file_records`, `user_quota_usage`, and `upload_sessions` stay valid.
+
+Password-only users with no Google email in the Auth export are **reported and left unmatched** — they cannot silent-login after cutover. Local `role` is **not** copied into Auth-Service; set `storage_roles` in hub admin.
+
+**Input file** (no live gRPC required; Auth-Service `ListUsers` can feed this later): JSON list or `{"users":[...]}` or CSV with `id,google_email`.
+
+```json
+[{"id": "cccccccc-cccc-cccc-cccc-cccccccccccc", "google_email": "family@example.test"}]
+```
+
+**Commands** (from `backend/`, or `docker compose exec app python scripts/migrate_local_users_to_auth.py …`). Backup PostgreSQL and blobs first.
+
+```bash
+cd backend
+
+# Dry-run (default): plan remaps, hashed unmatched emails, no DB/storage writes
+uv run python scripts/migrate_local_users_to_auth.py /path/to/auth-users.json
+
+# Optional: print unmatched emails in plaintext (never passwords)
+uv run python scripts/migrate_local_users_to_auth.py /path/to/auth-users.json --list-emails
+
+# Write DB remaps and rename users/{old_id} → users/{new_id} on each disk
+uv run python scripts/migrate_local_users_to_auth.py /path/to/auth-users.json --apply
+```
+
+- **FS** (`STORAGE_BACKEND=fs`): renames `{STORAGE_ROOT}/{disk_id}/users/{old_id}` on each `STORAGE_DISKS` entry.
+- **S3** (`STORAGE_BACKEND=s3`): copies then deletes object keys under `users/{old_id}/` via `S3StorageAdapter.rename` (list + copy). Dry-run logs the keys.
+
+Settings come from `get_settings()` (`DATABASE_URL`, `STORAGE_*`). Duplicate email matches are skipped with an error (fix the export and re-run).
+
+---
+
 ## Restoring from backup
 
 HomeCloud automatically creates compressed PostgreSQL dumps every day at 02:00 (and upon API request). Files are stored in:
