@@ -85,7 +85,7 @@ export function usePhotoUpload() {
               ),
             );
 
-            showSuccessToast("Файл загружен");
+            showSuccessToast("File uploaded");
             onUploaded?.(photo);
           } catch (error) {
             if (showProgressToast) {

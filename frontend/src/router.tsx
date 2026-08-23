@@ -25,7 +25,7 @@ function AuthUnavailableScreen({ onRetry }: { onRetry: () => void }) {
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
       <ErrorMessage errorCode="AUTH_UNAVAILABLE" className="mb-4 text-center" />
       <Button type="button" onClick={onRetry} className="max-w-xs">
-        Повторить
+        Retry
       </Button>
     </div>
   );

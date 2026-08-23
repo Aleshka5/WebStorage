@@ -38,7 +38,7 @@ export function Header() {
         <button
           type="button"
           onClick={() => setMenuOpen((prev) => !prev)}
-          aria-label="Меню пользователя"
+          aria-label="User menu"
           aria-expanded={menuOpen}
           className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         >
@@ -54,7 +54,7 @@ export function Header() {
               onClick={() => void handleLogout()}
               className="w-full px-4 py-2.5 text-left text-sm text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
             >
-              Выйти
+              Log out
             </button>
           </div>
         )}

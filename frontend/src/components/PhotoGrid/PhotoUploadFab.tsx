@@ -57,7 +57,7 @@ export function PhotoUploadFab({
             "transition-colors hover:bg-sky-500 focus-within:outline-none focus-within:ring-2",
             "focus-within:ring-sky-500 focus-within:ring-offset-2 focus-within:ring-offset-zinc-950",
           ].join(" ")}
-          aria-label="Загрузить фото"
+          aria-label="Upload photos"
         >
           <input
             type="file"
@@ -74,12 +74,12 @@ export function PhotoUploadFab({
       {uploads.length > 0 && (
         <div className="fixed bottom-24 right-6 z-40 w-72 max-w-[calc(100vw-3rem)] rounded-xl border border-zinc-800 bg-zinc-900/95 p-3 shadow-xl backdrop-blur-sm">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium text-zinc-200">Загрузка фото</p>
+            <p className="text-sm font-medium text-zinc-200">Uploading photos</p>
             <button
               type="button"
               onClick={onClearFinished}
               className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-              aria-label="Скрыть завершённые"
+              aria-label="Hide completed"
             >
               <X className="h-4 w-4" />
             </button>
@@ -91,8 +91,8 @@ export function PhotoUploadFab({
                   <span className="truncate text-zinc-300">{upload.name}</span>
                   <span className="shrink-0 text-xs text-zinc-500">
                     {upload.status === "uploading" && `${upload.progress}%`}
-                    {upload.status === "done" && "Готово"}
-                    {upload.status === "error" && "Ошибка"}
+                    {upload.status === "done" && "Done"}
+                    {upload.status === "error" && "Error"}
                   </span>
                 </div>
                 {upload.status === "uploading" && (

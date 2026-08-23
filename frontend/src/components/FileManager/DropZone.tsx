@@ -91,7 +91,7 @@ export function DropZone({ onDrop, onDropZip, disabled = false, children }: Drop
           aria-hidden="true"
         >
           <p className="rounded-lg bg-zinc-900/90 px-4 py-2 text-sm font-medium text-sky-300">
-            Отпустите файлы для загрузки
+            Drop files to upload
           </p>
         </div>
       )}

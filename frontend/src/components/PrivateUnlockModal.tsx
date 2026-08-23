@@ -52,7 +52,7 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
 
     const trimmed = passphrase.trim();
     if (!trimmed) {
-      setError("Введите кодовое слово");
+      setError("Enter a passphrase");
       return;
     }
 
@@ -67,7 +67,7 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
         return;
       }
 
-      setError("Неверное кодовое слово");
+      setError("Incorrect passphrase");
     } catch (err) {
       if (isAxiosError(err) && err.response?.status === 429) {
         const detail = err.response.data?.detail;
@@ -82,7 +82,7 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
         setError(getErrorMessage(detail?.error_code, {
           available_bytes: detail?.available_bytes,
           retry_after: detail?.retry_after,
-        }, detail?.message ?? "Не удалось разблокировать раздел"));
+        }, detail?.message ?? "Failed to unlock this section"));
       }
     } finally {
       setIsSubmitting(false);
@@ -97,10 +97,10 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
       await resetPrivateStorage();
       setIsRateLimited(false);
       setPassphrase("");
-      setHint("Придумайте и введите новое кодовое слово");
+      setHint("Create and enter a new passphrase");
     } catch (err) {
       const detail = getApiErrorDetail(err);
-      setError(detail?.message ?? "Не удалось сбросить приватное хранилище");
+      setError(detail?.message ?? "Failed to reset private storage");
     } finally {
       setIsResetting(false);
     }
@@ -127,17 +127,17 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
           </div>
           <div>
             <h2 id="private-unlock-title" className="text-lg font-semibold text-zinc-100">
-              Приватный раздел
+              Private section
             </h2>
             <p className="text-sm text-zinc-400">
-              {hint ?? "Введите кодовое слово для доступа"}
+              {hint ?? "Enter your passphrase to unlock"}
             </p>
           </div>
         </div>
 
         <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
           <Input
-            label="Кодовое слово"
+            label="Passphrase"
             type="password"
             value={passphrase}
             onChange={(event) => {
@@ -153,10 +153,10 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
           />
           <div className="flex gap-2">
             <Button type="button" variant="secondary" onClick={onCancel} disabled={isBusy}>
-              Отмена
+              Cancel
             </Button>
             <Button type="submit" isLoading={isSubmitting} disabled={isResetting}>
-              Войти в раздел
+              Unlock
             </Button>
           </div>
           {isRateLimited && (
@@ -167,7 +167,7 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
               isLoading={isResetting}
               disabled={isSubmitting}
             >
-              Сбросить приватное хранилище вместе с кодом
+              Reset private storage and passphrase
             </Button>
           )}
         </form>

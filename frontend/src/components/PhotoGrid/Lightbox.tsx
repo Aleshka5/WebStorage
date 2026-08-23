@@ -78,13 +78,13 @@ export function Lightbox({ photos, currentIndex, onClose, onNavigate }: Lightbox
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/95"
       role="dialog"
       aria-modal="true"
-      aria-label="Просмотр фото"
+      aria-label="Photo viewer"
     >
       <button
         type="button"
         className="absolute right-4 top-4 z-10 rounded-full bg-black/50 p-2 text-zinc-200 transition-colors hover:bg-black/70 hover:text-white"
         onClick={onClose}
-        aria-label="Закрыть"
+        aria-label="Close"
       >
         <X className="h-6 w-6" />
       </button>
@@ -94,7 +94,7 @@ export function Lightbox({ photos, currentIndex, onClose, onNavigate }: Lightbox
           type="button"
           className="absolute left-4 z-10 rounded-full bg-black/50 p-3 text-zinc-200 transition-colors hover:bg-black/70 hover:text-white"
           onClick={handlePrevious}
-          aria-label="Предыдущее фото"
+          aria-label="Previous photo"
         >
           <ChevronLeft className="h-8 w-8" />
         </button>
@@ -105,7 +105,7 @@ export function Lightbox({ photos, currentIndex, onClose, onNavigate }: Lightbox
           type="button"
           className="absolute right-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-3 text-zinc-200 transition-colors hover:bg-black/70 hover:text-white"
           onClick={handleNext}
-          aria-label="Следующее фото"
+          aria-label="Next photo"
         >
           <ChevronRight className="h-8 w-8" />
         </button>
@@ -116,12 +116,12 @@ export function Lightbox({ photos, currentIndex, onClose, onNavigate }: Lightbox
         className="absolute bottom-4 right-4 z-10 rounded-full bg-black/50 p-3 text-zinc-200 transition-colors hover:bg-black/70 hover:text-white disabled:opacity-50"
         onClick={() => void handleDownload()}
         disabled={isDownloading}
-        aria-label="Скачать"
+        aria-label="Download"
       >
         {isDownloading ? (
           <span
             className="block h-6 w-6 animate-spin rounded-full border-2 border-current border-t-transparent"
-            aria-label="Загрузка"
+            aria-label="Loading"
           />
         ) : (
           <Download className="h-6 w-6" />

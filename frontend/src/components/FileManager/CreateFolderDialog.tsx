@@ -45,10 +45,10 @@ export function CreateFolderDialog({ isOpen, onClose, onCreate }: CreateFolderDi
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Новая папка">
+    <Modal isOpen={isOpen} onClose={onClose} title="New folder">
       <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
         <Input
-          label="Название папки"
+          label="Folder name"
           value={name}
           onChange={(event) => {
             setName(event.target.value);
@@ -59,14 +59,14 @@ export function CreateFolderDialog({ isOpen, onClose, onCreate }: CreateFolderDi
           error={error}
           autoFocus
           disabled={isSubmitting}
-          placeholder="Введите название"
+          placeholder="Enter a name"
         />
         <div className="flex gap-2">
           <Button type="button" variant="secondary" onClick={onClose} disabled={isSubmitting}>
-            Отмена
+            Cancel
           </Button>
           <Button type="submit" isLoading={isSubmitting}>
-            Создать
+            Create
           </Button>
         </div>
       </form>

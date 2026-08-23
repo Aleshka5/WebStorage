@@ -6,20 +6,20 @@ export interface ErrorMessageOptions {
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
-  QUOTA_EXCEEDED: "Недостаточно места. Освободите {available} для продолжения",
-  PRIVATE_SESSION_EXPIRED: "Сессия истекла. Введите кодовое слово снова",
-  DISK_UNAVAILABLE: "Хранилище временно недоступно. Попробуйте позже",
-  TOO_MANY_ATTEMPTS: "Слишком много попыток. Подождите {retry_after} минут",
-  ACCESS_DENIED: "Нет доступа к этому разделу",
-  FILE_NOT_FOUND: "Файл не найден или был удалён",
-  INTERNAL_ERROR: "Произошла ошибка. Попробуйте позже",
-  UNSUPPORTED_FORMAT: "Неподдерживаемый формат файла",
-  PATH_TRAVERSAL_DETECTED: "Недопустимый путь к файлу",
-  UNAUTHORIZED: "Требуется авторизация",
-  AUTH_UNAVAILABLE: "Сервис авторизации временно недоступен. Попробуйте позже",
-  INVALID_CREDENTIALS: "Неверный email или пароль",
-  EMAIL_ALREADY_EXISTS: "Пользователь с таким email уже существует",
-  NOT_IMPLEMENTED: "Функция пока недоступна",
+  QUOTA_EXCEEDED: "Not enough space. Free up {available} to continue",
+  PRIVATE_SESSION_EXPIRED: "Session expired. Enter your passphrase again",
+  DISK_UNAVAILABLE: "Storage is temporarily unavailable. Try again later",
+  TOO_MANY_ATTEMPTS: "Too many attempts. Wait {retry_after} minutes",
+  ACCESS_DENIED: "You do not have access to this section",
+  FILE_NOT_FOUND: "File not found or has been deleted",
+  INTERNAL_ERROR: "Something went wrong. Try again later",
+  UNSUPPORTED_FORMAT: "Unsupported file format",
+  PATH_TRAVERSAL_DETECTED: "Invalid file path",
+  UNAUTHORIZED: "Authorization required",
+  AUTH_UNAVAILABLE: "Authorization service is temporarily unavailable. Try again later",
+  INVALID_CREDENTIALS: "Invalid email or password",
+  EMAIL_ALREADY_EXISTS: "A user with this email already exists",
+  NOT_IMPLEMENTED: "This feature is not available yet",
 };
 
 function applyPlaceholders(template: string, options?: ErrorMessageOptions): string {
@@ -29,7 +29,7 @@ function applyPlaceholders(template: string, options?: ErrorMessageOptions): str
     const available =
       options?.available_bytes !== undefined
         ? formatBytes(options.available_bytes, false)
-        : "место";
+        : "space";
     text = text.replace("{available}", available);
   }
 
@@ -56,7 +56,7 @@ export function getErrorMessage(
   }
 
   if (errorCode) {
-    return `Ошибка: ${errorCode}`;
+    return `Error: ${errorCode}`;
   }
 
   return ERROR_MESSAGES.INTERNAL_ERROR;

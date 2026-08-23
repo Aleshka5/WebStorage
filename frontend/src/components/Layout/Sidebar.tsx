@@ -21,11 +21,11 @@ interface MenuItem {
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { to: "/photos", label: "Фото", icon: Camera },
-  { to: "/files", label: "Файлы", icon: Folder },
-  { to: "/private", label: "Приватное", icon: Lock },
-  { to: "/shared", label: "Общее", icon: Users },
-  { to: "/admin", label: "Админка", icon: Settings },
+  { to: "/photos", label: "Photos", icon: Camera },
+  { to: "/files", label: "Files", icon: Folder },
+  { to: "/private", label: "Private", icon: Lock },
+  { to: "/shared", label: "Shared", icon: Users },
+  { to: "/admin", label: "Admin", icon: Settings },
 ];
 
 function isMenuItemVisible(to: string, role: string | undefined): boolean {
@@ -76,7 +76,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={toggle}
-          aria-label={expanded ? "Свернуть боковую панель" : "Развернуть боковую панель"}
+          aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         >
           {expanded ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}

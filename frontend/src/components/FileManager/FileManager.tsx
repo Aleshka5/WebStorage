@@ -50,7 +50,7 @@ function sortItems(
     if (sortField === "name") {
       const leftName = left.name ?? "";
       const rightName = right.name ?? "";
-      comparison = leftName.localeCompare(rightName, "ru");
+      comparison = leftName.localeCompare(rightName, "en");
     } else if (sortField === "size") {
       comparison = (left.size ?? 0) - (right.size ?? 0);
     } else {
@@ -67,11 +67,11 @@ function buildBreadcrumbs(currentPath: string): Array<{ label: string; path: str
   const normalized = currentPath.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
 
   if (normalized === "/") {
-    return [{ label: "Корень", path: "/" }];
+    return [{ label: "Root", path: "/" }];
   }
 
   const segments = normalized.split("/").filter(Boolean);
-  const crumbs: Array<{ label: string; path: string }> = [{ label: "Корень", path: "/" }];
+  const crumbs: Array<{ label: string; path: string }> = [{ label: "Root", path: "/" }];
 
   segments.forEach((segment, index) => {
     crumbs.push({
@@ -218,7 +218,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
           ? {
               ...prev,
               status: "error",
-              error: detail?.message ?? "Ошибка загрузки",
+              error: detail?.message ?? "Upload failed",
             }
           : null,
       );
@@ -241,7 +241,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
     try {
       await createDirectory(apiPrefix, currentPath, name);
       await refreshDirectory();
-      showSuccessToast("Папка создана");
+      showSuccessToast("Folder created");
     } catch (error) {
       showErrorToast(error);
       throw error;
@@ -277,7 +277,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
     try {
       await handleDelete(itemToDelete);
       setItemToDelete(null);
-      showSuccessToast("Файл удалён");
+      showSuccessToast("Deleted");
     } catch (error) {
       showErrorToast(error);
     } finally {
@@ -292,10 +292,10 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
           {mode === "encrypted" && (
             <span className="inline-flex items-center gap-1 rounded-md bg-violet-900/40 px-2 py-1 text-xs text-violet-300">
               <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-              Зашифровано
+              Encrypted
             </span>
           )}
-          <nav aria-label="Навигация по папкам" className="flex flex-wrap items-center gap-1">
+          <nav aria-label="Folder navigation" className="flex flex-wrap items-center gap-1">
             {breadcrumbs.map((crumb, index) => (
               <span key={crumb.path} className="inline-flex items-center gap-1">
                 {index > 0 && (
@@ -351,7 +351,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
           >
             <span className="inline-flex items-center gap-2">
               <Upload className="h-4 w-4" />
-              Загрузить
+              Upload
             </span>
           </Button>
           <Button
@@ -363,7 +363,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
           >
             <span className="inline-flex items-center gap-2">
               <Package className="h-4 w-4" />
-              Загрузить папку
+              Upload folder
             </span>
           </Button>
           <Button
@@ -374,7 +374,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
           >
             <span className="inline-flex items-center gap-2">
               <FolderPlus className="h-4 w-4" />
-              Новая папка
+              New folder
             </span>
           </Button>
         </div>
@@ -385,12 +385,12 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
       {uploads.length > 0 && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium text-zinc-200">Загрузка файлов</p>
+            <p className="text-sm font-medium text-zinc-200">Uploading files</p>
             <button
               type="button"
               onClick={clearFinished}
               className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-              aria-label="Скрыть завершённые"
+              aria-label="Hide completed"
             >
               <X className="h-4 w-4" />
             </button>
@@ -402,8 +402,8 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
                   <span className="truncate text-zinc-300">{upload.name}</span>
                   <span className="shrink-0 text-xs text-zinc-500">
                     {upload.status === "uploading" && `${upload.progress}%`}
-                    {upload.status === "done" && "Готово"}
-                    {upload.status === "error" && "Ошибка"}
+                    {upload.status === "done" && "Done"}
+                    {upload.status === "error" && "Error"}
                   </span>
                 </div>
                 {upload.status === "uploading" && (
@@ -426,13 +426,13 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
       {zipUploadProgress && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium text-zinc-200">Загрузка папки</p>
+            <p className="text-sm font-medium text-zinc-200">Uploading folder</p>
             {zipUploadProgress.status === "done" && (
               <button
                 type="button"
                 onClick={() => setZipUploadProgress(null)}
                 className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-                aria-label="Скрыть"
+                aria-label="Hide"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -442,8 +442,8 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
             <span className="truncate text-zinc-300">{zipUploadProgress.name}</span>
             <span className="shrink-0 text-xs text-zinc-500">
               {zipUploadProgress.status === "uploading" && `${zipUploadProgress.progress}%`}
-              {zipUploadProgress.status === "done" && "Готово"}
-              {zipUploadProgress.status === "error" && "Ошибка"}
+              {zipUploadProgress.status === "done" && "Done"}
+              {zipUploadProgress.status === "error" && "Error"}
             </span>
           </div>
           {zipUploadProgress.status === "uploading" && (
@@ -456,7 +456,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
           )}
           {zipUploadProgress.status === "done" && zipUploadProgress.files !== undefined && (
             <p className="mt-2 text-xs text-zinc-400">
-              Размещено {zipUploadProgress.files} файлов в {zipUploadProgress.dirs} папок
+              Extracted {zipUploadProgress.files} files into {zipUploadProgress.dirs} folders
             </p>
           )}
           {zipUploadProgress.status === "error" && zipUploadProgress.error && (
@@ -492,14 +492,14 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
             setItemToDelete(null);
           }
         }}
-        title="Удалить?"
+        title="Delete?"
       >
         {itemToDelete && (
           <>
             <p className="mb-4 text-sm text-zinc-300">
               {itemToDelete.is_dir
-                ? `Папка «${itemToDelete.name}» и всё её содержимое будут удалены без возможности восстановления.`
-                : `Файл «${itemToDelete.name}» будет удалён без возможности восстановления.`}
+                ? `Folder “${itemToDelete.name}” and all of its contents will be permanently deleted.`
+                : `File “${itemToDelete.name}” will be permanently deleted.`}
             </p>
             <div className="flex gap-2">
               <Button
@@ -508,7 +508,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
                 onClick={() => setItemToDelete(null)}
                 disabled={isDeleting}
               >
-                Отмена
+                Cancel
               </Button>
               <Button
                 type="button"
@@ -518,7 +518,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
                   void confirmDelete();
                 }}
               >
-                Удалить
+                Delete
               </Button>
             </div>
           </>

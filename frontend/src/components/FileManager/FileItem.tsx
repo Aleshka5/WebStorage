@@ -86,7 +86,7 @@ export function FileItem({
       await onRename(item, trimmedName);
       setIsRenaming(false);
     } catch {
-      setActionError("Не удалось переименовать");
+      setActionError("Failed to rename");
     } finally {
       setIsBusy(false);
     }
@@ -111,7 +111,7 @@ export function FileItem({
     try {
       await onDownload(item);
     } catch {
-      setActionError("Не удалось скачать файл");
+      setActionError("Failed to download file");
     } finally {
       setIsBusy(false);
     }
@@ -124,7 +124,7 @@ export function FileItem({
     try {
       await onDownloadFolder(item);
     } catch {
-      setActionError("Не удалось скачать папку");
+      setActionError("Failed to download folder");
     } finally {
       setIsBusy(false);
     }
@@ -193,7 +193,7 @@ export function FileItem({
             {item.is_dir ? (
               <button
                 type="button"
-                title="Скачать архивом"
+                title="Download as archive"
                 disabled={isBusy}
                 onClick={() => {
                   void handleDownloadFolder();
@@ -205,7 +205,7 @@ export function FileItem({
             ) : (
               <button
                 type="button"
-                title="Скачать"
+                title="Download"
                 disabled={isBusy}
                 onClick={() => {
                   void handleDownload();
@@ -217,7 +217,7 @@ export function FileItem({
             )}
             <button
               type="button"
-              title="Переименовать"
+              title="Rename"
               disabled={isBusy || isRenaming}
               onClick={startRename}
               className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-50"
@@ -226,7 +226,7 @@ export function FileItem({
             </button>
             <button
               type="button"
-              title="Удалить"
+              title="Delete"
               disabled={isBusy}
               onClick={() => onDeleteRequest(item)}
               className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-red-900/40 hover:text-red-300 disabled:opacity-50"

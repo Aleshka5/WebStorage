@@ -164,7 +164,7 @@ export default function PhotosPage() {
 
   return (
     <div className="flex min-h-0 flex-col gap-4">
-      <h2 className="text-xl font-semibold text-zinc-100">Фото</h2>
+      <h2 className="text-xl font-semibold text-zinc-100">Photos</h2>
 
       {selectionMode && (
         <div
@@ -174,7 +174,7 @@ export default function PhotosPage() {
           ].join(" ")}
         >
           <span className="text-sm font-medium text-zinc-200">
-            Выбрано: {selectedIds.size}
+            Selected: {selectedIds.size}
           </span>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -185,7 +185,7 @@ export default function PhotosPage() {
               disabled={allPhotosSelected}
               onClick={handleSelectAll}
             >
-              Выбрать все
+              Select all
             </Button>
             <Button
               type="button"
@@ -196,14 +196,14 @@ export default function PhotosPage() {
             >
               <span className="inline-flex items-center gap-2">
                 <Trash2 className="h-4 w-4" />
-                Удалить
+                Delete
               </span>
             </Button>
             <button
               type="button"
               onClick={handleExitSelectionMode}
               className="rounded p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-              aria-label="Отменить выбор"
+              aria-label="Cancel selection"
             >
               <X className="h-5 w-5" />
             </button>
@@ -241,12 +241,12 @@ export default function PhotosPage() {
             setIsDeleteModalOpen(false);
           }
         }}
-        title="Удалить фото?"
+        title="Delete photos?"
       >
         <p className="mb-4 text-sm text-zinc-300">
           {selectedIds.size === 1
-            ? "Выбранное фото будет удалено без возможности восстановления."
-            : `Выбранные фото (${selectedIds.size}) будут удалены без возможности восстановления.`}
+            ? "The selected photo will be permanently deleted."
+            : `The selected photos (${selectedIds.size}) will be permanently deleted.`}
         </p>
         <div className="flex gap-2">
           <Button
@@ -255,7 +255,7 @@ export default function PhotosPage() {
             onClick={() => setIsDeleteModalOpen(false)}
             disabled={isDeleting}
           >
-            Отмена
+            Cancel
           </Button>
           <Button
             type="button"
@@ -265,7 +265,7 @@ export default function PhotosPage() {
               void handleConfirmDelete();
             }}
           >
-            Удалить
+            Delete
           </Button>
         </div>
       </Modal>

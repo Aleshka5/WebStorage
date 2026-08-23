@@ -7,16 +7,16 @@ import { getPrivateQuota, type PrivateQuota } from "../services/privateApi";
 
 function formatPrivateUsedBytes(bytes: number): string {
   if (bytes === 0) {
-    return "0 МБ";
+    return "0 MB";
   }
 
   const megabytes = bytes / (1024 * 1024);
-  return `${Math.round(megabytes)} МБ`;
+  return `${Math.round(megabytes)} MB`;
 }
 
 function formatPrivateLimitBytes(bytes: number): string {
   const gigabytes = bytes / (1024 * 1024 * 1024);
-  return `${Math.round(gigabytes * 10) / 10} ГБ`;
+  return `${Math.round(gigabytes * 10) / 10} GB`;
 }
 
 function PrivateQuotaBar({ refreshKey }: { refreshKey: number }) {
@@ -44,7 +44,7 @@ function PrivateQuotaBar({ refreshKey }: { refreshKey: number }) {
     return (
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
         <div className="mb-1.5 h-2 w-full overflow-hidden rounded-full bg-zinc-800" />
-        <span className="text-xs text-zinc-500">Загрузка квоты...</span>
+        <span className="text-xs text-zinc-500">Loading quota...</span>
       </div>
     );
   }
@@ -66,7 +66,7 @@ function PrivateQuotaBar({ refreshKey }: { refreshKey: number }) {
         />
       </div>
       <span className="text-xs text-zinc-400">
-        Приватное: {formatPrivateUsedBytes(quota.private_bytes)} из{" "}
+        Private: {formatPrivateUsedBytes(quota.private_bytes)} of{" "}
         {formatPrivateLimitBytes(quota.private_limit_bytes)}
       </span>
     </div>
@@ -97,7 +97,7 @@ export default function PrivatePage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <h2 className="text-xl font-semibold text-zinc-100">Приватное</h2>
+      <h2 className="text-xl font-semibold text-zinc-100">Private</h2>
 
       {isActive && (
         <>

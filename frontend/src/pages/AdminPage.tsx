@@ -79,15 +79,15 @@ function StorageDiskCard({ disk }: { disk: DiskStat }) {
 
       <div className="grid grid-cols-3 gap-2 text-xs text-zinc-400">
         <div>
-          <span className="block text-zinc-500">Всего</span>
+          <span className="block text-zinc-500">Total</span>
           {formatDiskBytes(disk.total_bytes)}
         </div>
         <div>
-          <span className="block text-zinc-500">Занято</span>
+          <span className="block text-zinc-500">Used</span>
           {formatDiskBytes(disk.used_bytes)}
         </div>
         <div>
-          <span className="block text-zinc-500">Свободно</span>
+          <span className="block text-zinc-500">Free</span>
           {formatDiskBytes(disk.free_bytes)}
         </div>
       </div>
@@ -145,7 +145,7 @@ function PrivateQuotaInput({ user, onSaved }: QuotaInputProps) {
         }
       }}
       className="w-20 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500/50 disabled:opacity-50"
-      aria-label={`Лимит приватного для ${user.email}`}
+      aria-label={`Private quota for ${user.email}`}
     />
   );
 }
@@ -185,7 +185,7 @@ export default function AdminPage() {
       setUsers(data.items);
       setTotal(data.total);
     } catch {
-      setError("Не удалось загрузить список пользователей");
+      setError("Failed to load users");
     } finally {
       setIsLoading(false);
     }
@@ -222,7 +222,7 @@ export default function AdminPage() {
       return;
     }
 
-    const confirmed = window.confirm(`Заблокировать пользователя ${user.email}?`);
+    const confirmed = window.confirm(`Block user ${user.email}?`);
     if (!confirmed) {
       return;
     }
@@ -231,13 +231,13 @@ export default function AdminPage() {
       await blockUser(user.id);
       void fetchUsers();
     } catch {
-      window.alert("Не удалось заблокировать пользователя");
+      window.alert("Failed to block user");
     }
   };
 
   const handleDelete = async (user: UserAdminView) => {
     const confirmed = window.confirm(
-      `Удалить пользователя ${user.email}? Все его файлы будут удалены без возможности восстановления.`,
+      `Delete user ${user.email}? All of their files will be permanently deleted.`,
     );
     if (!confirmed) {
       return;
@@ -247,17 +247,17 @@ export default function AdminPage() {
       await deleteUser(user.id);
       void fetchUsers();
     } catch {
-      window.alert("Не удалось удалить пользователя");
+      window.alert("Failed to delete user");
     }
   };
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-6 overflow-y-auto">
-      <h2 className="text-xl font-semibold text-zinc-100">Админ-панель</h2>
+      <h2 className="text-xl font-semibold text-zinc-100">Admin panel</h2>
 
       <section className="flex flex-col gap-4">
         <h3 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
-          Пользователи
+          Users
         </h3>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -277,14 +277,14 @@ export default function AdminPage() {
                     : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100",
                 ].join(" ")}
               >
-                {role === "ALL" ? "Все" : role}
+                {role === "ALL" ? "All" : role}
               </button>
             ))}
           </div>
 
           <input
             type="search"
-            placeholder="Поиск по email..."
+            placeholder="Search by email..."
             value={emailSearch}
             onChange={(event) => setEmailSearch(event.target.value)}
             className="min-w-[220px] flex-1 rounded-lg border border-zinc-700 bg-zinc-800/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-sky-500/50"
@@ -303,17 +303,17 @@ export default function AdminPage() {
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">Email</th>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">
-                  Роль
+                  Role
                   <span className="mt-0.5 block text-xs font-normal text-zinc-500">
-                    меняется в Auth-Service /admin
+                    changed in Auth-Service /admin
                   </span>
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">Статус</th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">Занято</th>
+                <th className="px-4 py-3 text-left font-medium text-zinc-400">Status</th>
+                <th className="px-4 py-3 text-left font-medium text-zinc-400">Used</th>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">
-                  Лимит приватного (ГБ)
+                  Private quota (GB)
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">Регистрация</th>
+                <th className="px-4 py-3 text-left font-medium text-zinc-400">Registered</th>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400" />
               </tr>
             </thead>
@@ -321,13 +321,13 @@ export default function AdminPage() {
               {isLoading ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
-                    Загрузка...
+                    Loading...
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
-                    Пользователи не найдены
+                    No users found
                   </td>
                 </tr>
               ) : (
@@ -343,7 +343,7 @@ export default function AdminPage() {
                           user.is_active ? "text-emerald-400" : "text-red-400"
                         }
                       >
-                        {user.is_active ? "Активен" : "Заблокирован"}
+                        {user.is_active ? "Active" : "Blocked"}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-zinc-300">
@@ -363,7 +363,7 @@ export default function AdminPage() {
                           disabled={!user.is_active || user.id === currentUser.user_id}
                           onClick={() => void handleBlock(user)}
                         >
-                          Заблокировать
+                          Block
                         </Button>
                         <Button
                           variant="secondary"
@@ -371,7 +371,7 @@ export default function AdminPage() {
                           disabled={user.id === currentUser.user_id}
                           onClick={() => void handleDelete(user)}
                         >
-                          Удалить
+                          Delete
                         </Button>
                       </div>
                     </td>
@@ -385,7 +385,7 @@ export default function AdminPage() {
         {totalPages > 1 && (
           <div className="flex items-center justify-between text-sm text-zinc-400">
             <span>
-              Показано {users.length} из {total}
+              Showing {users.length} of {total}
             </span>
             <div className="flex gap-2">
               <button
@@ -394,7 +394,7 @@ export default function AdminPage() {
                 onClick={() => setPage((current) => current - 1)}
                 className="rounded-lg bg-zinc-800 px-3 py-1.5 text-zinc-300 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Назад
+                Previous
               </button>
               <span className="px-2 py-1.5">
                 {page} / {totalPages}
@@ -405,7 +405,7 @@ export default function AdminPage() {
                 onClick={() => setPage((current) => current + 1)}
                 className="rounded-lg bg-zinc-800 px-3 py-1.5 text-zinc-300 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Вперёд
+                Next
               </button>
             </div>
           </div>
@@ -414,16 +414,16 @@ export default function AdminPage() {
 
       <section className="flex flex-col gap-4">
         <h3 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
-          Хранилище
+          Storage
         </h3>
 
         {storageLoading ? (
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-8 text-center text-sm text-zinc-500">
-            Загрузка статистики дисков...
+            Loading disk stats...
           </div>
         ) : disks.length === 0 ? (
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-8 text-center text-sm text-zinc-500">
-            Диски не найдены
+            No disks found
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

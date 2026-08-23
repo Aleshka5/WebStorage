@@ -4,20 +4,20 @@ import { useQuotaStore } from "../../store/quota";
 
 function formatUsedBytes(bytes: number): string {
   if (bytes === 0) {
-    return "0 Б";
+    return "0 B";
   }
 
   const megabytes = bytes / (1024 * 1024);
-  return `${Math.round(megabytes)} МБ`;
+  return `${Math.round(megabytes)} MB`;
 }
 
 function formatLimitBytes(bytes: number, role: string): string {
   if (role === "STRANGER") {
-    return `${Math.round(bytes / (1024 * 1024))} МБ`;
+    return `${Math.round(bytes / (1024 * 1024))} MB`;
   }
 
   const gigabytes = bytes / (1024 * 1024 * 1024);
-  return `${Math.round(gigabytes * 10) / 10} ГБ`;
+  return `${Math.round(gigabytes * 10) / 10} GB`;
 }
 
 export function StorageUsageBar() {
@@ -34,7 +34,7 @@ export function StorageUsageBar() {
     return (
       <div className="border-t border-zinc-800 px-4 py-3">
         <div className="mb-1.5 h-2 w-full overflow-hidden rounded-full bg-zinc-800" />
-        <span className="text-xs text-zinc-500">Загрузка...</span>
+        <span className="text-xs text-zinc-500">Loading...</span>
       </div>
     );
   }
@@ -53,7 +53,7 @@ export function StorageUsageBar() {
         />
       </div>
       <span className="text-xs text-zinc-400">
-        {formatUsedBytes(quota.used_bytes)} из {formatLimitBytes(quota.limit_bytes, user.role)}
+        {formatUsedBytes(quota.used_bytes)} of {formatLimitBytes(quota.limit_bytes, user.role)}
       </span>
     </div>
   );

@@ -83,16 +83,16 @@ export function FileList({
       <table className="min-w-full border-collapse">
         <thead>
           <tr className="border-b border-zinc-800 bg-zinc-900/80">
-            <th className="w-10 px-3 py-3" aria-label="Тип" />
+            <th className="w-10 px-3 py-3" aria-label="Type" />
             <SortableHeader
-              label="Имя"
+              label="Name"
               field="name"
               sortField={sortField}
               sortDirection={sortDirection}
               onSortChange={onSortChange}
             />
             <SortableHeader
-              label="Размер"
+              label="Size"
               field="size"
               sortField={sortField}
               sortDirection={sortDirection}
@@ -100,7 +100,7 @@ export function FileList({
               className="hidden sm:table-cell"
             />
             <SortableHeader
-              label="Изменён"
+              label="Modified"
               field="modified_at"
               sortField={sortField}
               sortDirection={sortDirection}
@@ -108,7 +108,7 @@ export function FileList({
               className="hidden md:table-cell"
             />
             <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Действия
+              Actions
             </th>
           </tr>
         </thead>
@@ -116,13 +116,13 @@ export function FileList({
           {isLoading ? (
             <tr>
               <td colSpan={5} className="px-3 py-10 text-center text-sm text-zinc-500">
-                Загрузка...
+                Loading...
               </td>
             </tr>
           ) : items.length === 0 ? (
             <tr>
               <td colSpan={5} className="px-3 py-10 text-center text-sm text-zinc-500">
-                Папка пуста. Перетащите файлы сюда или нажмите «Загрузить».
+                This folder is empty. Drag files here or click Upload.
               </td>
             </tr>
           ) : (

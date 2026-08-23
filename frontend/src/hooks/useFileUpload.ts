@@ -72,7 +72,7 @@ export function useFileUpload(apiPrefix: string) {
                   : item,
               ),
             );
-            showSuccessToast("Файл загружен");
+            showSuccessToast("File uploaded");
           } catch (error) {
             if (showProgressToast) {
               dismissToast(progressToastId);

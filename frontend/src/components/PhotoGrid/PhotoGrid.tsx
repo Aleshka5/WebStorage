@@ -50,7 +50,7 @@ export function PhotoGrid({
 
       {photos.length === 0 && !isLoading && (
         <p className="py-12 text-center text-zinc-500">
-          Нет фотографий. Нажмите «+», чтобы загрузить.
+          No photos yet. Tap “+” to upload.
         </p>
       )}
 
@@ -58,7 +58,7 @@ export function PhotoGrid({
         <div className="flex justify-center py-6" aria-live="polite">
           <span
             className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-600 border-t-sky-500"
-            aria-label="Загрузка"
+            aria-label="Loading"
           />
         </div>
       )}
