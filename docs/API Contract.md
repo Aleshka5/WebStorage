@@ -233,6 +233,7 @@ Private quota overruns → `413 QUOTA_EXCEEDED`.
 ```
 
 Note: TZ historically mentioned `total_bytes`; **implemented field is `limit_bytes`**.
+`limit_bytes` is the per-user stored cap (default 100 MiB; `0` = unlimited), not remaining disk space.
 
 ---
 
@@ -244,13 +245,13 @@ Note: TZ historically mentioned `total_bytes`; **implemented field is `limit_byt
 |---|---|---|---|
 | `GET` | `/api/admin/users` | `page`, `limit` (1–100), optional `role`, `email` | `{ items: UserAdminView[], total }` (`role` is live `storage_roles` from gRPC ListUsers; display-only; filters apply to live role/email) |
 | `PATCH` | `/api/admin/users/{user_id}/role` | — | **410 Gone** — roles are changed in Auth-Service `/admin` |
-| `PATCH` | `/api/admin/users/{user_id}/quota` | `{ "private_limit_gb": number ≥ 0 }` | `204` |
+| `PATCH` | `/api/admin/users/{user_id}/quota` | `{ "limit_mb"?: number ≥ 0, "private_limit_gb"?: number ≥ 0 }` (at least one required) | `204` |
 | `POST` | `/api/admin/users/{user_id}/block` | — | `204` (`is_active=false`) |
 | `DELETE` | `/api/admin/users/{user_id}` | — | `204` |
 
 Errors: self delete → `403`; missing user → `404 USER_NOT_FOUND`. Role column is read-only; ListUsers outage → `503 AUTH_UNAVAILABLE` (no fallback to local `users.role`).
 
-**UserAdminView** (representative): `user_id`, `email`, `role`, `is_active`, `created_at`, usage/quota fields as returned by service.
+**UserAdminView** (representative): `id`, `email`, `role`, `is_active`, `created_at`, `quota_used_bytes`, `limit_bytes`, `private_limit_bytes`.
 
 ### Storage / ops
 

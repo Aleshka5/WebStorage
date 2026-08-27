@@ -1,24 +1,7 @@
 import { useEffect } from "react";
 import { useAuthStore } from "../../store/auth";
 import { useQuotaStore } from "../../store/quota";
-
-function formatUsedBytes(bytes: number): string {
-  if (bytes === 0) {
-    return "0 B";
-  }
-
-  const megabytes = bytes / (1024 * 1024);
-  return `${Math.round(megabytes)} MB`;
-}
-
-function formatLimitBytes(bytes: number, role: string): string {
-  if (role === "STRANGER") {
-    return `${Math.round(bytes / (1024 * 1024))} MB`;
-  }
-
-  const gigabytes = bytes / (1024 * 1024 * 1024);
-  return `${Math.round(gigabytes * 10) / 10} GB`;
-}
+import { formatBytes } from "../../utils/format";
 
 export function StorageUsageBar() {
   const user = useAuthStore((state) => state.user);
@@ -43,6 +26,8 @@ export function StorageUsageBar() {
     quota.limit_bytes > 0
       ? Math.min(100, Math.round((quota.used_bytes / quota.limit_bytes) * 100))
       : 0;
+  const limitLabel =
+    quota.limit_bytes > 0 ? formatBytes(quota.limit_bytes, false) : "Unlimited";
 
   return (
     <div className="border-t border-zinc-800 px-4 py-3">
@@ -53,7 +38,7 @@ export function StorageUsageBar() {
         />
       </div>
       <span className="text-xs text-zinc-400">
-        {formatUsedBytes(quota.used_bytes)} of {formatLimitBytes(quota.limit_bytes, user.role)}
+        {formatBytes(quota.used_bytes, false)} of {limitLabel}
       </span>
     </div>
   );

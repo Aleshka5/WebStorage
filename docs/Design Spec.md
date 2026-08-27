@@ -139,8 +139,8 @@ Encrypted adapter encrypts/decrypts names and payloads around the plain adapter.
 ### 4.3 Quota
 
 - Denormalized `user_quota_usage` updated on upload/delete.
-- STRANGER hard limit from settings; FAMILY/ADMIN limit = Σ free space.
-- Private bytes checked against `private_limit_bytes` on private uploads.
+- All roles: total limit = stored `user_quota_usage.limit_bytes` (default 100 MB; admin-mutable; `0` = unlimited).
+- Private bytes checked against `private_limit_bytes` on private uploads; private uploads also enforce the total cap.
 - Reconcile job corrects drift > 1 MB.
 
 ### 4.4 Encryption

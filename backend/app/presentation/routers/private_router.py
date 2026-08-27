@@ -13,6 +13,7 @@ from app.domain.entities.file_record import FileRecord, FileSection
 from app.domain.entities.user import User
 from app.domain.exceptions import QuotaExceededError
 from app.domain.value_objects.error_codes import ErrorCode
+from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.session_store import (
     UNLOCK_RATE_LIMIT_MAX_ATTEMPTS,
@@ -21,7 +22,8 @@ from app.infrastructure.session_store import (
     get_session_store,
 )
 from app.infrastructure.storage.base_adapter import READ_CHUNK_SIZE
-from app.presentation.dependencies.auth import get_current_user
+from app.presentation.dependencies.auth import get_current_user, get_quota_repository
+from app.presentation.routers.file_router import _ensure_upload_quota
 from app.presentation.dependencies.private import (
     _get_session_id,
     get_private_file_service,
@@ -82,7 +84,9 @@ async def _ensure_private_upload_quota(
     user_id,
     size: int,
     private_service: PrivateService,
+    quota_repo: QuotaRepository,
 ) -> None:
+    await _ensure_upload_quota(user_id, size, quota_repo)
     quota = await private_service.get_quota(user_id)
     private_bytes = quota["private_bytes"]
     private_limit = quota["private_limit_bytes"]
@@ -258,6 +262,7 @@ async def upload_private_file(
     current_user: User = Depends(get_current_user),
     file_service: FileService = Depends(get_private_file_service),
     private_service: PrivateService = Depends(get_private_service),
+    quota_repo: QuotaRepository = Depends(get_quota_repository),
     session: AsyncSession = Depends(get_async_session),
 ) -> FileRecordResponse:
     if not uploaded_file.filename:
@@ -294,6 +299,7 @@ async def upload_private_file(
             current_user.id,
             file_size,
             private_service,
+            quota_repo,
         )
         record = await file_service.upload_file(
             user_id=current_user.id,

@@ -120,7 +120,7 @@ As a QA owner:
 | `StorageAdapter.base_path: Path` | Part of ABC | FS leak in port | Evolve port to backend-agnostic root (string prefix / URI); update Plain adapter accordingly. |
 | DI helpers | `Path.mkdir` in photos/shared/files deps | Assumes local FS | Create prefixes via adapter `mkdir` / ensure-prefix helper. |
 | Archive / Thumbnail / Backup | Direct `Path` I/O in places | Bypasses port | Route through adapter or extract `BlobStore` used by both FS and S3. |
-| FAMILY/ADMIN quota = “free disk” | Sum of local free space | Must redefine against MinIO usable capacity | Admin stats + quota ceiling from object-storage free space. |
+| FAMILY/ADMIN quota = “free disk” | **Resolved (v1.2):** per-user `limit_bytes` (default 100 MB), not MinIO/disk free space. DiskRouter probes remain for write routing / admin health only. |
 | Encrypted adapter | Imports / assumes plain FS tmp patterns | Risk of FS-only private path | US-S3-04; keep crypto framing identical. |
 | E-STORAGE epic | Init layout via `init_storage.py` on disks | FS-centric ops story | Either extend init to ensure buckets or add MinIO bootstrap job; link epics. |
 

@@ -12,12 +12,14 @@ from app.domain.value_objects.role import Role
 from app.infrastructure.database.models import User as UserModel
 from app.infrastructure.database.models import UserQuotaUsage
 from app.infrastructure.database.models import UserRole
+from config import get_settings
 
 
 @dataclass(frozen=True)
 class UserAdminRow:
     user: UserEntity
     quota_used_bytes: int
+    limit_bytes: int
     private_limit_bytes: int
 
 
@@ -168,6 +170,15 @@ class UserRepository:
         logger.info("Updated active status for user {} to {}", user_id, is_active)
         return self._to_entity(model)
 
+    def _to_admin_row(self, user_model: UserModel, quota_model: UserQuotaUsage | None) -> UserAdminRow:
+        default_limit = get_settings().business_logic.default_user_quota_bytes
+        return UserAdminRow(
+            user=self._to_entity(user_model),
+            quota_used_bytes=quota_model.total_bytes if quota_model else 0,
+            limit_bytes=quota_model.limit_bytes if quota_model else default_limit,
+            private_limit_bytes=quota_model.private_limit_bytes if quota_model else 0,
+        )
+
     async def get_admin_rows_by_ids(self, user_ids: list[UUID]) -> dict[UUID, UserAdminRow]:
         if not user_ids:
             return {}
@@ -180,11 +191,7 @@ class UserRepository:
         result = await self._session.execute(stmt)
         rows: dict[UUID, UserAdminRow] = {}
         for user_model, quota_model in result.all():
-            rows[user_model.id] = UserAdminRow(
-                user=self._to_entity(user_model),
-                quota_used_bytes=quota_model.total_bytes if quota_model else 0,
-                private_limit_bytes=quota_model.private_limit_bytes if quota_model else 0,
-            )
+            rows[user_model.id] = self._to_admin_row(user_model, quota_model)
         logger.info("Loaded {} local admin projections for {} auth users", len(rows), len(user_ids))
         return rows
 
@@ -217,13 +224,7 @@ class UserRepository:
         result = await self._session.execute(stmt)
         rows: list[UserAdminRow] = []
         for user_model, quota_model in result.all():
-            rows.append(
-                UserAdminRow(
-                    user=self._to_entity(user_model),
-                    quota_used_bytes=quota_model.total_bytes if quota_model else 0,
-                    private_limit_bytes=quota_model.private_limit_bytes if quota_model else 0,
-                )
-            )
+            rows.append(self._to_admin_row(user_model, quota_model))
 
         logger.info(
             "Listed {} admin users (page={}, limit={}, total={})",

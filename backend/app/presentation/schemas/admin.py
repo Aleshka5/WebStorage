@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.application.admin_service import DiskStat, UserAdminView
 from app.application.archive_service import ArchiveReport, ArchiveStats
@@ -17,6 +17,7 @@ class UserAdminViewResponse(BaseModel):
     is_active: bool
     created_at: datetime
     quota_used_bytes: int = Field(ge=0)
+    limit_bytes: int = Field(ge=0)
     private_limit_bytes: int = Field(ge=0)
 
     @classmethod
@@ -28,6 +29,7 @@ class UserAdminViewResponse(BaseModel):
             is_active=view.is_active,
             created_at=view.created_at,
             quota_used_bytes=view.quota_used_bytes,
+            limit_bytes=view.limit_bytes,
             private_limit_bytes=view.private_limit_bytes,
         )
 
@@ -37,8 +39,15 @@ class UserListResponse(BaseModel):
     total: int = Field(ge=0)
 
 
-class UpdatePrivateQuotaRequest(BaseModel):
-    private_limit_gb: float = Field(ge=0)
+class UpdateUserQuotaRequest(BaseModel):
+    limit_mb: float | None = Field(default=None, ge=0)
+    private_limit_gb: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def require_at_least_one_limit(self) -> "UpdateUserQuotaRequest":
+        if self.limit_mb is None and self.private_limit_gb is None:
+            raise ValueError("At least one of limit_mb or private_limit_gb is required")
+        return self
 
 
 class DiskStatResponse(BaseModel):

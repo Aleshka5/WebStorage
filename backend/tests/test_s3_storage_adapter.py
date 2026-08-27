@@ -82,6 +82,45 @@ async def test_write_read_roundtrip(s3_adapter: S3StorageAdapter) -> None:
     assert b"".join(chunks) == payload
 
 
+async def _chunked(data: bytes, size: int = 64 * 1024) -> AsyncIterator[bytes]:
+    for offset in range(0, len(data), size):
+        yield data[offset : offset + size]
+
+
+@pytest.mark.asyncio
+async def test_write_read_multipart_payload(s3_adapter: S3StorageAdapter) -> None:
+    from app.infrastructure.storage.s3_adapter import MULTIPART_PART_SIZE
+
+    payload = b"A" * (MULTIPART_PART_SIZE + 123)
+    checksum = await s3_adapter.write("docs/large.bin", _chunked(payload), len(payload))
+
+    assert len(checksum) == 64
+    collected = bytearray()
+    async for chunk in s3_adapter.read("docs/large.bin"):
+        collected.extend(chunk)
+    assert bytes(collected) == payload
+
+
+@pytest.mark.asyncio
+async def test_rename_uses_multipart_copy_for_large_object(
+    s3_adapter: S3StorageAdapter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.infrastructure.storage.s3_adapter.COPY_OBJECT_MAX_BYTES",
+        100,
+    )
+    payload = b"X" * 250
+    await s3_adapter.write("old-large.bin", _chunks(payload), len(payload))
+    await s3_adapter.rename("old-large.bin", "new-large.bin")
+
+    assert not await s3_adapter.exists("old-large.bin")
+    collected = bytearray()
+    async for chunk in s3_adapter.read("new-large.bin"):
+        collected.extend(chunk)
+    assert bytes(collected) == payload
+
+
 @pytest.mark.asyncio
 async def test_list_mkdir_hides_tmp_and_dotfiles(s3_adapter: S3StorageAdapter) -> None:
     await s3_adapter.mkdir("folder")

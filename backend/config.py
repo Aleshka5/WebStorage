@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -135,8 +135,19 @@ class BusinessLogicSettings(BaseSettings):
 
     photo_batch_size: int = Field(default=30, validation_alias="PHOTO_BATCH_SIZE")
     thumbnail_max_px: int = Field(default=400, validation_alias="THUMBNAIL_MAX_PX")
-    stranger_quota_mb: int = Field(default=100, validation_alias="STRANGER_QUOTA_MB")
+    default_user_quota_mb: int = Field(
+        default=100,
+        validation_alias=AliasChoices("DEFAULT_USER_QUOTA_MB", "STRANGER_QUOTA_MB"),
+        description=(
+            "Default total quota for a new user_quota_usage row (all roles). "
+            "STRANGER_QUOTA_MB is a deprecated alias."
+        ),
+    )
     archive_days_threshold: int = Field(default=180, validation_alias="ARCHIVE_DAYS_THRESHOLD")
+
+    @property
+    def default_user_quota_bytes(self) -> int:
+        return self.default_user_quota_mb * 1024 * 1024
 
 
 class AdminSettings(BaseSettings):

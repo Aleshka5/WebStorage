@@ -385,7 +385,7 @@ All parameters are set in `.env` (template — `.env.example`).
 
 | Variable | Default | Description |
 |---|---|---|
-| `STRANGER_QUOTA_MB` | `100` | Storage limit for STRANGER role |
+| `DEFAULT_USER_QUOTA_MB` | `100` | Default total quota for a new user (all roles). `STRANGER_QUOTA_MB` is a deprecated alias |
 | `ARCHIVE_DAYS_THRESHOLD` | `180` | Number of days without access before file is archived |
 
 **Logging:**

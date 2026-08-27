@@ -90,7 +90,8 @@ export function PhotoUploadFab({
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <span className="truncate text-zinc-300">{upload.name}</span>
                   <span className="shrink-0 text-xs text-zinc-500">
-                    {upload.status === "uploading" && `${upload.progress}%`}
+                    {upload.status === "uploading" &&
+                      (upload.progress >= 100 ? "Saving..." : `${upload.progress}%`)}
                     {upload.status === "done" && "Done"}
                     {upload.status === "error" && "Error"}
                   </span>

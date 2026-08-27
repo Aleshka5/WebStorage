@@ -105,7 +105,7 @@ Stale `PENDING` older than 1 hour → maintenance cleanup.
 | `used_bytes` | int |
 | `limit_bytes` | int |
 
-Helpers: `available_bytes()`, `is_exceeded()`.
+Helpers: `available_bytes()`, `is_exceeded()`, `is_unlimited()`, `would_exceed()`. `limit_bytes = 0` means unlimited.
 
 ---
 
@@ -135,6 +135,7 @@ Mirrors domain FileRecord; FK `user_id` → `users.id` ON DELETE CASCADE; indexe
 |---|---|
 | `user_id` | PK / FK |
 | `total_bytes` | All sections contributing to quota |
+| `limit_bytes` | Admin-configured total cap (default 100 MiB; `0` = unlimited) |
 | `private_bytes` | Private section usage |
 | `private_limit_bytes` | Admin-configured private cap |
 | `photos_bytes` | Photo usage (denormalized) |
@@ -203,7 +204,7 @@ Frontend mirrors: `types/files.ts`, `types/photos.ts`, auth store `User`.
 1. A committed file has matching FS object (or archive path if archived).
 2. Quota counters must not go negative; reconcile repairs drift.
 3. Private names/content unreadable without session key.
-4. STRANGER total usage ≤ `STRANGER_QUOTA_MB * 1MiB`.
+4. Total usage ≤ `user_quota_usage.limit_bytes` for every role, unless `limit_bytes` is `0` (unlimited).
 5. Shared ACL: delete only by owner or ADMIN.
 6. Soft domain rules: admin cannot delete self or demote/change own role via admin API.
 
@@ -216,5 +217,6 @@ Alembic under `backend/alembic/versions/`:
 - `001_initial` — core schema
 - `002_add_google_id`
 - `003_add_private_limit_bytes`
+- `004_add_user_limit_bytes` — per-user total cap (default 100 MiB)
 
 Entrypoint runs `alembic upgrade head` on container start.

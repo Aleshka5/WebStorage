@@ -15,13 +15,11 @@ Object keys are isomorphic to FS relative paths under the disk root:
 from __future__ import annotations
 
 import hashlib
-import tempfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import aioboto3
 from botocore.config import Config
@@ -39,7 +37,13 @@ from config import get_settings
 
 DIR_MARKER_SUFFIX = "/"
 TMP_DIR_NAME = ".tmp"
-_SPOOL_MAX_SIZE = 8 * 1024 * 1024
+# S3 requires parts (except the last) to be at least 5 MiB. 8 MiB keeps the
+# request count reasonable for large home-storage uploads.
+MULTIPART_PART_SIZE = 8 * 1024 * 1024
+# Single CopyObject is limited to 5 GiB; larger objects need multipart copy.
+COPY_OBJECT_MAX_BYTES = 5 * 1024 * 1024 * 1024
+S3_CONNECT_TIMEOUT_SECONDS = 10
+S3_READ_TIMEOUT_SECONDS = 300
 
 
 class S3StorageAdapter(StorageAdapter):
@@ -103,7 +107,13 @@ class S3StorageAdapter(StorageAdapter):
             return
 
         addressing = "path" if self._path_style else "virtual"
-        config = Config(s3={"addressing_style": addressing})
+        config = Config(
+            s3={"addressing_style": addressing},
+            connect_timeout=S3_CONNECT_TIMEOUT_SECONDS,
+            read_timeout=S3_READ_TIMEOUT_SECONDS,
+            retries={"max_attempts": 5, "mode": "standard"},
+            tcp_keepalive=True,
+        )
         async with self._session.client(
             "s3",
             endpoint_url=self._endpoint_url,
@@ -262,33 +272,74 @@ class S3StorageAdapter(StorageAdapter):
         if not final_key or final_key.endswith(DIR_MARKER_SUFFIX):
             raise PathTraversalError(f"Invalid write path {path!r}")
 
-        tmp_key = self._object_key(f"{TMP_DIR_NAME}/{uuid4().hex}")
         hasher = hashlib.sha256()
         bytes_written = 0
+        buffer = bytearray()
+        parts: list[dict[str, Any]] = []
+        upload_id: str | None = None
+        part_number = 1
+
+        logger.info(
+            "Starting S3 write bucket={} key={} declared_size={}",
+            self._bucket,
+            final_key,
+            size,
+        )
 
         try:
-            with tempfile.SpooledTemporaryFile(max_size=_SPOOL_MAX_SIZE) as spool:
+            async with self._client() as client:
                 async for chunk in data:
                     hasher.update(chunk)
                     bytes_written += len(chunk)
-                    spool.write(chunk)
-                spool.seek(0)
+                    buffer.extend(chunk)
+                    while len(buffer) >= MULTIPART_PART_SIZE:
+                        if upload_id is None:
+                            upload_id = await self._start_multipart(client, final_key)
+                        await self._upload_buffer_part(
+                            client,
+                            final_key,
+                            upload_id,
+                            part_number,
+                            bytes(buffer[:MULTIPART_PART_SIZE]),
+                            parts,
+                        )
+                        del buffer[:MULTIPART_PART_SIZE]
+                        part_number += 1
 
-                async with self._client() as client:
+                if upload_id is None:
                     await client.put_object(
                         Bucket=self._bucket,
-                        Key=tmp_key,
-                        Body=spool,
-                    )
-                    await client.copy_object(
-                        Bucket=self._bucket,
-                        CopySource={"Bucket": self._bucket, "Key": tmp_key},
                         Key=final_key,
+                        Body=bytes(buffer),
                     )
-                    await client.delete_object(Bucket=self._bucket, Key=tmp_key)
+                else:
+                    if buffer:
+                        await self._upload_buffer_part(
+                            client,
+                            final_key,
+                            upload_id,
+                            part_number,
+                            bytes(buffer),
+                            parts,
+                        )
+                    await client.complete_multipart_upload(
+                        Bucket=self._bucket,
+                        Key=final_key,
+                        UploadId=upload_id,
+                        MultipartUpload={"Parts": parts},
+                    )
+                    logger.info(
+                        "Completed multipart upload for key {} ({} parts, {} bytes)",
+                        final_key,
+                        len(parts),
+                        bytes_written,
+                    )
+                    upload_id = None
         except PathTraversalError:
             raise
         except ClientError:
+            if upload_id is not None:
+                await self._abort_multipart(final_key, upload_id)
             logger.exception(
                 "Failed to write S3 object bucket={} key={}",
                 self._bucket,
@@ -296,6 +347,8 @@ class S3StorageAdapter(StorageAdapter):
             )
             raise
         except Exception:
+            if upload_id is not None:
+                await self._abort_multipart(final_key, upload_id)
             logger.exception(
                 "Unexpected error writing S3 object bucket={} key={}",
                 self._bucket,
@@ -320,6 +373,122 @@ class S3StorageAdapter(StorageAdapter):
             checksum,
         )
         return checksum
+
+    async def _start_multipart(self, client: Any, key: str) -> str:
+        response = await client.create_multipart_upload(Bucket=self._bucket, Key=key)
+        upload_id = response["UploadId"]
+        logger.info("Started multipart upload bucket={} key={} upload_id={}", self._bucket, key, upload_id)
+        return upload_id
+
+    async def _upload_buffer_part(
+        self,
+        client: Any,
+        key: str,
+        upload_id: str,
+        part_number: int,
+        body: bytes,
+        parts: list[dict[str, Any]],
+    ) -> None:
+        response = await client.upload_part(
+            Bucket=self._bucket,
+            Key=key,
+            UploadId=upload_id,
+            PartNumber=part_number,
+            Body=body,
+        )
+        parts.append({"ETag": response["ETag"], "PartNumber": part_number})
+        logger.info(
+            "Uploaded S3 part {} for key {} ({} bytes)",
+            part_number,
+            key,
+            len(body),
+        )
+
+    async def _abort_multipart(self, key: str, upload_id: str) -> None:
+        try:
+            async with self._client() as client:
+                await client.abort_multipart_upload(
+                    Bucket=self._bucket,
+                    Key=key,
+                    UploadId=upload_id,
+                )
+            logger.warning("Aborted multipart upload bucket={} key={} upload_id={}", self._bucket, key, upload_id)
+        except Exception:
+            logger.exception(
+                "Failed to abort multipart upload bucket={} key={} upload_id={}",
+                self._bucket,
+                key,
+                upload_id,
+            )
+
+    async def _copy_object(self, client: Any, source_key: str, dest_key: str) -> None:
+        try:
+            head = await client.head_object(Bucket=self._bucket, Key=source_key)
+        except ClientError as exc:
+            if self._is_not_found(exc):
+                raise FileNotFoundError(f"S3 key {source_key!r} not found") from exc
+            raise
+
+        size = int(head.get("ContentLength") or 0)
+        if size < COPY_OBJECT_MAX_BYTES:
+            await client.copy_object(
+                Bucket=self._bucket,
+                CopySource={"Bucket": self._bucket, "Key": source_key},
+                Key=dest_key,
+            )
+            return
+
+        logger.info(
+            "Using multipart copy for large object {} -> {} ({} bytes)",
+            source_key,
+            dest_key,
+            size,
+        )
+        response = await client.create_multipart_upload(Bucket=self._bucket, Key=dest_key)
+        upload_id = response["UploadId"]
+        parts: list[dict[str, Any]] = []
+        part_number = 1
+        offset = 0
+        try:
+            while offset < size:
+                end = min(offset + MULTIPART_PART_SIZE, size) - 1
+                copied = await client.upload_part_copy(
+                    Bucket=self._bucket,
+                    Key=dest_key,
+                    UploadId=upload_id,
+                    PartNumber=part_number,
+                    CopySource={"Bucket": self._bucket, "Key": source_key},
+                    CopySourceRange=f"bytes={offset}-{end}",
+                )
+                parts.append(
+                    {
+                        "ETag": copied["CopyPartResult"]["ETag"],
+                        "PartNumber": part_number,
+                    }
+                )
+                offset = end + 1
+                part_number += 1
+            await client.complete_multipart_upload(
+                Bucket=self._bucket,
+                Key=dest_key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+        except Exception:
+            try:
+                await client.abort_multipart_upload(
+                    Bucket=self._bucket,
+                    Key=dest_key,
+                    UploadId=upload_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to abort multipart copy bucket={} key={} upload_id={}",
+                    self._bucket,
+                    dest_key,
+                    upload_id,
+                )
+            raise
 
     async def delete(self, path: str) -> None:
         logical = self._safe_logical_key(path)
@@ -417,11 +586,7 @@ class S3StorageAdapter(StorageAdapter):
             async with self._client() as client:
                 # Single object rename.
                 if await self._head_exists(client, old_key):
-                    await client.copy_object(
-                        Bucket=self._bucket,
-                        CopySource={"Bucket": self._bucket, "Key": old_key},
-                        Key=new_key,
-                    )
+                    await self._copy_object(client, old_key, new_key)
                     await client.delete_object(Bucket=self._bucket, Key=old_key)
                     logger.info(
                         "Renamed S3 object {} -> {} (bucket={})",
@@ -444,11 +609,7 @@ class S3StorageAdapter(StorageAdapter):
                 for source_key in source_keys:
                     suffix = source_key[len(old_prefix) :]
                     dest_key = f"{new_prefix}{suffix}"
-                    await client.copy_object(
-                        Bucket=self._bucket,
-                        CopySource={"Bucket": self._bucket, "Key": source_key},
-                        Key=dest_key,
-                    )
+                    await self._copy_object(client, source_key, dest_key)
 
                 for offset in range(0, len(source_keys), 1000):
                     batch = [{"Key": key} for key in source_keys[offset : offset + 1000]]

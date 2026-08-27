@@ -16,6 +16,7 @@ from app.infrastructure.disk_router import DiskRouter
 from app.infrastructure.storage.s3_adapter import build_disk_root_adapter
 from config import Settings, get_settings
 
+BYTES_PER_MB = 1024 * 1024
 BYTES_PER_GB = 1024 * 1024 * 1024
 
 
@@ -27,6 +28,7 @@ class UserAdminView:
     is_active: bool
     created_at: datetime
     quota_used_bytes: int
+    limit_bytes: int
     private_limit_bytes: int
 
 
@@ -104,8 +106,11 @@ class AdminService:
             ]
         return filtered
 
-    @staticmethod
+    def _default_limit_bytes(self) -> int:
+        return self._settings.business_logic.default_user_quota_bytes
+
     def _view_from_principal(
+        self,
         principal: AuthPrincipal,
         local: UserAdminRow | None,
     ) -> UserAdminView:
@@ -117,6 +122,7 @@ class AdminService:
                 is_active=True,
                 created_at=datetime.now(UTC),
                 quota_used_bytes=0,
+                limit_bytes=self._default_limit_bytes(),
                 private_limit_bytes=0,
             )
         return UserAdminView(
@@ -126,6 +132,7 @@ class AdminService:
             is_active=local.user.is_active,
             created_at=local.user.created_at,
             quota_used_bytes=local.quota_used_bytes,
+            limit_bytes=local.limit_bytes,
             private_limit_bytes=local.private_limit_bytes,
         )
 
@@ -153,54 +160,84 @@ class AdminService:
         logger.info("Role for user {} updated to {} by admin {}", target_user_id, new_role.value, admin_id)
         return user
 
-    async def update_private_quota(
+    async def _ensure_local_user(
         self,
-        admin_id: UUID,
         target_user_id: UUID,
-        limit_gb: float,
         principals: list[AuthPrincipal],
+        operation: str,
     ) -> None:
-        if limit_gb < 0:
-            raise ValueError("Private quota limit cannot be negative")
-
-        limit_bytes = int(limit_gb * BYTES_PER_GB)
-        logger.info(
-            "Admin {} updating private quota for user {} to {} GB ({} bytes)",
-            admin_id,
-            target_user_id,
-            limit_gb,
-            limit_bytes,
-        )
-
         principal = next(
             (item for item in principals if item.id == target_user_id),
             None,
         )
         if principal is None:
             logger.error(
-                "User {} not found in Auth ListUsers for private quota update",
+                "User {} not found in Auth ListUsers for {}",
                 target_user_id,
+                operation,
             )
             raise UserNotFoundError(f"User {target_user_id} not found")
 
         user = await self._user_repo.upsert_from_principal(principal)
         if user is None:
             logger.error(
-                "Cannot project user {} for private quota update "
-                "(email/UUID conflict; US-AUTHZ-11)",
+                "Cannot project user {} for {} (email/UUID conflict; US-AUTHZ-11)",
                 target_user_id,
+                operation,
             )
-            raise RuntimeError(
-                f"Cannot project user {target_user_id} for private quota update"
+            raise RuntimeError(f"Cannot project user {target_user_id} for {operation}")
+
+    async def update_user_quota(
+        self,
+        admin_id: UUID,
+        target_user_id: UUID,
+        principals: list[AuthPrincipal],
+        *,
+        limit_mb: float | None = None,
+        private_limit_gb: float | None = None,
+    ) -> None:
+        if limit_mb is None and private_limit_gb is None:
+            raise ValueError("At least one of limit_mb or private_limit_gb is required")
+        if limit_mb is not None and limit_mb < 0:
+            raise ValueError("Total quota limit cannot be negative")
+        if private_limit_gb is not None and private_limit_gb < 0:
+            raise ValueError("Private quota limit cannot be negative")
+
+        await self._ensure_local_user(target_user_id, principals, "quota update")
+
+        if limit_mb is not None:
+            limit_bytes = int(limit_mb * BYTES_PER_MB)
+            logger.info(
+                "Admin {} updating total quota for user {} to {} MB ({} bytes)",
+                admin_id,
+                target_user_id,
+                limit_mb,
+                limit_bytes,
+            )
+            await self._quota_repo.update_limit(target_user_id, limit_bytes)
+            logger.info(
+                "Total quota for user {} updated to {} bytes by admin {}",
+                target_user_id,
+                limit_bytes,
+                admin_id,
             )
 
-        await self._quota_repo.update_private_limit(target_user_id, limit_bytes)
-        logger.info(
-            "Private quota for user {} updated to {} bytes by admin {}",
-            target_user_id,
-            limit_bytes,
-            admin_id,
-        )
+        if private_limit_gb is not None:
+            private_limit_bytes = int(private_limit_gb * BYTES_PER_GB)
+            logger.info(
+                "Admin {} updating private quota for user {} to {} GB ({} bytes)",
+                admin_id,
+                target_user_id,
+                private_limit_gb,
+                private_limit_bytes,
+            )
+            await self._quota_repo.update_private_limit(target_user_id, private_limit_bytes)
+            logger.info(
+                "Private quota for user {} updated to {} bytes by admin {}",
+                target_user_id,
+                private_limit_bytes,
+                admin_id,
+            )
 
     async def block_user(self, admin_id: UUID, target_user_id: UUID) -> None:
         logger.info("Admin {} blocking user {}", admin_id, target_user_id)

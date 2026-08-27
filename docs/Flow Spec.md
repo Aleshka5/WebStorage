@@ -33,7 +33,7 @@ App mount
 | Nav Shared | Visible FAMILY/ADMIN |
 | Nav Admin | Visible ADMIN |
 
-Quota bar: `used_bytes` / `limit_bytes` from `GET /api/quota/me`. FAMILY/ADMIN limits reflect free disk capacity.
+Quota bar: `used_bytes` / `limit_bytes` from `GET /api/quota/me`. `limit_bytes` is the per-user admin-set cap (default 100 MB), not free disk capacity.
 
 ---
 

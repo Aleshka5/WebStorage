@@ -3,6 +3,7 @@ import io
 import mimetypes
 import zipfile
 from collections.abc import AsyncIterator
+from typing import BinaryIO
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
@@ -207,7 +208,7 @@ class FileService:
         user_id: UUID,
         path: str,
         zip_filename: str,
-        zip_data: bytes,
+        zip_source: BinaryIO,
         total_uncompressed_bytes: int,
         available_bytes: int,
     ) -> dict:
@@ -236,7 +237,7 @@ class FileService:
 
         # --- Open and validate ZIP ---
         try:
-            zf = zipfile.ZipFile(io.BytesIO(zip_data), "r")
+            zf = zipfile.ZipFile(zip_source, "r")
         except zipfile.BadZipFile:
             raise ValueError("Uploaded file is not a valid ZIP archive")
 
@@ -250,29 +251,29 @@ class FileService:
         archive_name = PurePosixPath(zip_filename).stem  # strip .zip
         target_root = self._join_path(normalized_path, archive_name)
         effective_paths: list[tuple[str, str, zipfile.ZipInfo]] = []  # (section_path, arcname, info)
-        for info in entries:
-            raw_name = info.filename
-            if raw_name.startswith("/") or raw_name.startswith("\\"):
-                zf.close()
-                raise ValueError(f"ZIP entry has an absolute path: {raw_name}")
+        try:
+            for info in entries:
+                raw_name = info.filename
+                if raw_name.startswith("/") or raw_name.startswith("\\"):
+                    raise ValueError(f"ZIP entry has an absolute path: {raw_name}")
 
-            clean = raw_name.replace("\\", "/")
-            parts = PurePosixPath(clean).parts
-            if ".." in parts:
-                zf.close()
-                raise ValueError(f"ZIP entry escapes target directory: {raw_name}")
+                clean = raw_name.replace("\\", "/")
+                parts = PurePosixPath(clean).parts
+                if ".." in parts:
+                    raise ValueError(f"ZIP entry escapes target directory: {raw_name}")
 
-            # Resolve the entry relative to target_root
-            if info.is_dir():
-                entry_section_path = self._join_path(target_root, clean.rstrip("/"))
-            else:
-                entry_section_path = self._join_path(target_root, clean)
-                # Normalize (e.g. dir//file -> dir/file)
-                entry_section_path = self._normalize_path(entry_section_path)
+                # Resolve the entry relative to target_root
+                if info.is_dir():
+                    entry_section_path = self._join_path(target_root, clean.rstrip("/"))
+                else:
+                    entry_section_path = self._join_path(target_root, clean)
+                    # Normalize (e.g. dir//file -> dir/file)
+                    entry_section_path = self._normalize_path(entry_section_path)
 
-            effective_paths.append((entry_section_path, clean, info))
-
-        zf.close()
+                effective_paths.append((entry_section_path, clean, info))
+        except ValueError:
+            zf.close()
+            raise
 
         # --- Create directories ---
         created_dirs: set[str] = set()
@@ -291,7 +292,7 @@ class FileService:
         total_written_bytes = 0
         error_count = 0
 
-        with zipfile.ZipFile(io.BytesIO(zip_data), "r") as zf:
+        try:
             for section_path, arcname, info in effective_paths:
                 if info.is_dir():
                     continue
@@ -307,8 +308,7 @@ class FileService:
                         pass
 
                 try:
-                    file_data = zf.read(info)
-                    file_size = len(file_data)
+                    file_size = info.file_size
                     mime_type = mimetypes.guess_type(arcname)[0] or DEFAULT_MIME_TYPE
                     disk_relative_path = self._adapter.to_disk_relative_path(section_path)
 
@@ -328,7 +328,11 @@ class FileService:
                     )
 
                     tmp_path = self._join_path(TMP_DIR, str(record.id))
-                    checksum = await self._adapter.write(tmp_path, self._iter_bytes(file_data), file_size)
+                    checksum = await self._adapter.write(
+                        tmp_path,
+                        self._iter_zip_entry(zf, info),
+                        file_size,
+                    )
                     await self._adapter.rename(tmp_path, section_path)
                     committed = await self._file_repo.update_status(
                         record.id,
@@ -358,6 +362,8 @@ class FileService:
                         arcname,
                         section_path,
                     )
+        finally:
+            zf.close()
 
         stats = {
             "files": files_written,
@@ -374,9 +380,20 @@ class FileService:
         )
         return stats
 
-    async def _iter_bytes(self, data: bytes) -> AsyncIterator[bytes]:
-        """Yield bytes from a static payload."""
-        yield data
+    async def _iter_zip_entry(
+        self,
+        zip_file: zipfile.ZipFile,
+        info: zipfile.ZipInfo,
+    ) -> AsyncIterator[bytes]:
+        source = zip_file.open(info, "r")
+        try:
+            while True:
+                chunk = source.read(READ_CHUNK)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            source.close()
 
     async def rename(self, actor_id: UUID, file_id: UUID, new_name: str) -> FileRecord:
         record = await self._get_downloadable_record(file_id, actor_id)

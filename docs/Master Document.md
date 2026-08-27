@@ -60,8 +60,7 @@ HomeCloud is a Docker-deployable home cloud that gives a family (and invited str
 
 **Quotas**
 
-- **STRANGER:** hard total limit `STRANGER_QUOTA_MB` (default 100); private sublimit from admin.
-- **FAMILY / ADMIN:** total limit = free space across disks; private limit = N GB per user (admin).
+- **All roles:** total limit = per-user `limit_bytes` (default `DEFAULT_USER_QUOTA_MB` = 100); admin can raise/lower per user; `0` = unlimited. Private sublimit from admin (`private_limit_bytes`; `0` = no sublimit). User quota is not free disk / MinIO capacity.
 
 ---
 

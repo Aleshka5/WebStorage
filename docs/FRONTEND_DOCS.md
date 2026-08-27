@@ -226,7 +226,7 @@ resetPrivateStorage() -> Promise<void>
 ```typescript
 listUsers(params) -> Promise<UserListResponse>
 updateUserRole(userId, role) -> Promise<void>
-updateUserPrivateQuota(userId, privateLimitGb) -> Promise<void>
+updateUserQuota(userId, { limit_mb?, private_limit_gb? }) -> Promise<void>
 blockUser(userId) -> Promise<void>
 deleteUser(userId) -> Promise<void>
 getStorageStats() -> Promise<{disks: DiskStat[]}>
@@ -278,8 +278,7 @@ CSS Grid/Flex: `h-screen`, `bg-zinc-950`. Outlet рендерит дочерни
 Файл: `src/components/Layout/StorageUsageBar.tsx`
 
 Прогресс-бар использования хранилища:
-- `formatUsedBytes`: bytes -> MB ("{N} МБ")
-- `formatLimitBytes`: STRANGER -> MB, FAMILY/ADMIN -> GB ("{N} ГБ")
+- `formatBytes` for used and limit for every role; `limit_bytes = 0` shown as Unlimited
 - Fetches quota from store на mount
 
 ### FileManager
@@ -528,7 +527,7 @@ Flash message через location.state.message.
 Два раздела:
 1. **Пользователи**: таблица с фильтрами (role buttons, email search debounce 300ms)
    - Role select per user (change triggers confirm dialog -> updateUserRole)
-   - PrivateQuotaInput (blur save)
+   - TotalQuotaInput (MB, blur save) and PrivateQuotaInput (GB, blur save)
    - Block/Delete buttons per row
    - Pagination controls
 2. **Хранилище**: StorageDiskCard grid (total/used/free + status + progress bar)

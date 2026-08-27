@@ -164,6 +164,7 @@ def test_admin_list_users_uses_live_list_users_roles() -> None:
             created_at=datetime.now(UTC),
         ),
         quota_used_bytes=1024,
+        limit_bytes=50 * 1024 * 1024,
         private_limit_bytes=2048,
     )
     client = TestClient(_build_app(validator, user_repo=user_repo))
@@ -177,7 +178,9 @@ def test_admin_list_users_uses_live_list_users_roles() -> None:
     assert by_id[str(USER_B_ID)]["role"] == Role.FAMILY.value
     assert by_id[str(USER_B_ID)]["email"] == USER_B_FAMILY.email
     assert by_id[str(USER_B_ID)]["quota_used_bytes"] == 1024
+    assert by_id[str(USER_B_ID)]["limit_bytes"] == 50 * 1024 * 1024
     assert by_id[str(ADMIN_USER_ID)]["role"] == Role.ADMIN.value
+    assert by_id[str(ADMIN_USER_ID)]["limit_bytes"] == 100 * 1024 * 1024
     assert len(validator.list_users_calls) == 1
     assert validator.list_users_calls == [
         (SESSION_ID, get_settings().auth_grpc.caller_host),
@@ -267,9 +270,66 @@ def test_patch_quota_creates_local_projection_for_auth_user() -> None:
     assert response.status_code == 204
     assert user_repo.principals[-1].id == USER_B_ID
     quota_repo.update_private_limit.assert_awaited_once_with(USER_B_ID, 10 * 1024 * 1024 * 1024)
+    quota_repo.update_limit.assert_not_called()
     assert validator.list_users_calls == [
         (SESSION_ID, get_settings().auth_grpc.caller_host),
     ]
+
+
+def test_patch_quota_limit_mb_only() -> None:
+    validator = FakeAuthValidator(
+        principal=ADMIN_PRINCIPAL,
+        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
+    )
+    user_repo = FakeUserRepository()
+    quota_repo = AsyncMock()
+    client = TestClient(_build_app(validator, user_repo=user_repo, quota_repo=quota_repo))
+
+    response = client.patch(
+        f"/api/admin/users/{USER_B_ID}/quota",
+        json={"limit_mb": 500},
+        cookies={COOKIE_NAME: SESSION_ID},
+    )
+
+    assert response.status_code == 204
+    quota_repo.update_limit.assert_awaited_once_with(USER_B_ID, 500 * 1024 * 1024)
+    quota_repo.update_private_limit.assert_not_called()
+
+
+def test_patch_quota_both_limits() -> None:
+    validator = FakeAuthValidator(
+        principal=ADMIN_PRINCIPAL,
+        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
+    )
+    user_repo = FakeUserRepository()
+    quota_repo = AsyncMock()
+    client = TestClient(_build_app(validator, user_repo=user_repo, quota_repo=quota_repo))
+
+    response = client.patch(
+        f"/api/admin/users/{USER_B_ID}/quota",
+        json={"limit_mb": 250, "private_limit_gb": 2.0},
+        cookies={COOKIE_NAME: SESSION_ID},
+    )
+
+    assert response.status_code == 204
+    quota_repo.update_limit.assert_awaited_once_with(USER_B_ID, 250 * 1024 * 1024)
+    quota_repo.update_private_limit.assert_awaited_once_with(USER_B_ID, 2 * 1024 * 1024 * 1024)
+
+
+def test_patch_quota_empty_body_is_unprocessable() -> None:
+    validator = FakeAuthValidator(
+        principal=ADMIN_PRINCIPAL,
+        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
+    )
+    client = TestClient(_build_app(validator))
+
+    response = client.patch(
+        f"/api/admin/users/{USER_B_ID}/quota",
+        json={},
+        cookies={COOKIE_NAME: SESSION_ID},
+    )
+
+    assert response.status_code == 422
 
 
 def test_patch_quota_unknown_auth_user_is_not_found() -> None:
@@ -308,7 +368,7 @@ def test_patch_quota_list_users_unavailable_is_auth_unavailable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_private_quota_rejects_user_missing_from_list_users() -> None:
+async def test_update_user_quota_rejects_user_missing_from_list_users() -> None:
     service = AdminService(
         user_repo=FakeUserRepository(),
         quota_repo=AsyncMock(),
@@ -318,9 +378,9 @@ async def test_update_private_quota_rejects_user_missing_from_list_users() -> No
     )
 
     with pytest.raises(UserNotFoundError):
-        await service.update_private_quota(
+        await service.update_user_quota(
             ADMIN_USER_ID,
             USER_B_ID,
-            10.0,
             [ADMIN_PRINCIPAL],
+            private_limit_gb=10.0,
         )

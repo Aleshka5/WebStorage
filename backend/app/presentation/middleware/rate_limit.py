@@ -1,10 +1,6 @@
-from collections.abc import Awaitable, Callable
-
-from fastapi import Request, Response
 from loguru import logger
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.domain.value_objects.error_codes import ErrorCode
 from app.infrastructure.session_store import get_session_store
@@ -18,36 +14,43 @@ _AUTH_RATE_LIMITS: dict[str, tuple[int, int]] = {
 }
 
 
-def _client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    if request.client is not None:
-        return request.client.host
+def _client_ip_from_scope(scope: Scope) -> str:
+    headers = dict(scope.get("headers") or [])
+    forwarded = headers.get(b"x-forwarded-for")
+    if forwarded:
+        return forwarded.decode("latin-1").split(",")[0].strip()
+    client = scope.get("client")
+    if client:
+        return client[0]
     return "unknown"
 
 
-class AuthRateLimitMiddleware(BaseHTTPMiddleware):
+class AuthRateLimitMiddleware:
+    """Pure ASGI middleware so large file uploads are not buffered in memory.
+
+    Starlette's BaseHTTPMiddleware wraps the request body and is unsafe for
+    multipart uploads of large files.
+    """
+
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
         self._session_store = get_session_store()
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        if request.method != "POST":
-            return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("method") != "POST":
+            await self.app(scope, receive, send)
+            return
 
-        rate_limit = _AUTH_RATE_LIMITS.get(request.url.path)
+        path = scope.get("path", "")
+        rate_limit = _AUTH_RATE_LIMITS.get(path)
         if rate_limit is None:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
         max_requests, window_seconds = rate_limit
-        client_ip = _client_ip(request)
+        client_ip = _client_ip_from_scope(scope)
         count, retry_after = await self._session_store.increment_auth_requests(
-            request.url.path,
+            path,
             client_ip,
             window_seconds,
         )
@@ -55,12 +58,12 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         if count > max_requests:
             logger.warning(
                 "Auth rate limit exceeded for {} from IP {}: {}/{}",
-                request.url.path,
+                path,
                 client_ip,
                 count,
                 max_requests,
             )
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=429,
                 content={
                     "detail": {
@@ -70,5 +73,7 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
                     },
                 },
             )
+            await response(scope, receive, send)
+            return
 
-        return await call_next(request)
+        await self.app(scope, receive, send)

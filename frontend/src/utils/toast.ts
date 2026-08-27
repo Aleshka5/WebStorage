@@ -25,6 +25,10 @@ export function showSuccessToast(message: string): void {
 export const LARGE_UPLOAD_THRESHOLD_BYTES = 5 * 1024 * 1024;
 
 export function showUploadProgressToast(toastId: string, fileName: string, progress: number): void {
+  if (progress >= 100) {
+    toast.loading(`Saving ${fileName}...`, { id: toastId });
+    return;
+  }
   toast.loading(`Uploading ${fileName}... ${progress}%`, { id: toastId });
 }
 

@@ -7,6 +7,7 @@ export interface UserAdminView {
   is_active: boolean;
   created_at: string;
   quota_used_bytes: number;
+  limit_bytes: number;
   private_limit_bytes: number;
 }
 
@@ -40,11 +41,11 @@ export async function listUsers(params: ListUsersParams = {}): Promise<UserListR
   return data;
 }
 
-export async function updateUserPrivateQuota(
+export async function updateUserQuota(
   userId: string,
-  privateLimitGb: number,
+  body: { limit_mb?: number; private_limit_gb?: number },
 ): Promise<void> {
-  await api.patch(`/api/admin/users/${userId}/quota`, { private_limit_gb: privateLimitGb });
+  await api.patch(`/api/admin/users/${userId}/quota`, body);
 }
 
 export async function blockUser(userId: string): Promise<void> {

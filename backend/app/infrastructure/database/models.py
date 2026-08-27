@@ -18,6 +18,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database.base import Base
 
+DEFAULT_USER_QUOTA_BYTES = 100 * 1024 * 1024
+
 
 class UserRole(str, enum.Enum):
     STRANGER = "STRANGER"
@@ -136,6 +138,11 @@ class UserQuotaUsage(Base):
         primary_key=True,
     )
     total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    limit_bytes: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=DEFAULT_USER_QUOTA_BYTES,
+    )
     private_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     private_limit_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     photos_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

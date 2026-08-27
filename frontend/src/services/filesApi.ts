@@ -17,7 +17,6 @@ export async function uploadFile(
 
   await api.post(`${apiPrefix}/upload`, formData, {
     params: { path },
-    headers: { "Content-Type": "multipart/form-data" },
     onUploadProgress: (event) => {
       if (!onProgress || !event.total) {
         return;
@@ -94,7 +93,6 @@ export async function uploadZipFolder(
 
   const response = await api.post(`${apiPrefix}/upload-zip`, formData, {
     params: { path },
-    headers: { "Content-Type": "multipart/form-data" },
     onUploadProgress: (event) => {
       if (!onProgress || !event.total) {
         return;

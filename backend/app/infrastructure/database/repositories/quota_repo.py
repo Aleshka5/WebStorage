@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.file_record import FileSection
 from app.infrastructure.database.models import UserQuotaUsage
+from config import get_settings
 
 
 class QuotaRepository:
@@ -17,9 +18,11 @@ class QuotaRepository:
         if model is not None:
             return model
 
+        default_limit = get_settings().business_logic.default_user_quota_bytes
         model = UserQuotaUsage(
             user_id=user_id,
             total_bytes=0,
+            limit_bytes=default_limit,
             private_bytes=0,
             private_limit_bytes=0,
             photos_bytes=0,
@@ -27,7 +30,11 @@ class QuotaRepository:
         self._session.add(model)
         await self._session.flush()
         await self._session.refresh(model)
-        logger.info("Created quota usage record for user {}", user_id)
+        logger.info(
+            "Created quota usage record for user {} with limit_bytes={}",
+            user_id,
+            default_limit,
+        )
         return model
 
     async def increment(
@@ -120,6 +127,25 @@ class QuotaRepository:
             "Reset private quota for user {} (removed {} bytes from total usage)",
             user_id,
             private_bytes,
+        )
+        return model
+
+    async def update_limit(self, user_id: UUID, limit_bytes: int) -> UserQuotaUsage:
+        await self.get_by_user_id(user_id)
+
+        stmt = (
+            update(UserQuotaUsage)
+            .where(UserQuotaUsage.user_id == user_id)
+            .values(limit_bytes=limit_bytes)
+            .returning(UserQuotaUsage)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one()
+        await self._session.refresh(model)
+        logger.info(
+            "Updated total limit for user {} to {} bytes",
+            user_id,
+            limit_bytes,
         )
         return model
 

@@ -6,7 +6,7 @@ import {
   deleteUser,
   getStorageStats,
   listUsers,
-  updateUserPrivateQuota,
+  updateUserQuota,
   type DiskStat,
   type UserAdminView,
 } from "../services/adminApi";
@@ -20,6 +20,10 @@ type RoleFilter = (typeof ROLES)[number] | "ALL";
 
 function bytesToGb(bytes: number): number {
   return Math.round((bytes / (1024 * 1024 * 1024)) * 10) / 10;
+}
+
+function bytesToMb(bytes: number): number {
+  return Math.round((bytes / (1024 * 1024)) * 10) / 10;
 }
 
 function formatDiskBytes(bytes: number): string {
@@ -100,31 +104,42 @@ interface QuotaInputProps {
   onSaved: () => void;
 }
 
-function PrivateQuotaInput({ user, onSaved }: QuotaInputProps) {
-  const [value, setValue] = useState(String(bytesToGb(user.private_limit_bytes)));
+interface NumericQuotaInputProps {
+  displayValue: number;
+  step: number;
+  ariaLabel: string;
+  onSave: (parsed: number) => Promise<void>;
+}
+
+function NumericQuotaInput({
+  displayValue,
+  step,
+  ariaLabel,
+  onSave,
+}: NumericQuotaInputProps) {
+  const [value, setValue] = useState(String(displayValue));
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    setValue(String(bytesToGb(user.private_limit_bytes)));
-  }, [user.private_limit_bytes]);
+    setValue(String(displayValue));
+  }, [displayValue]);
 
   const handleBlur = async () => {
     const parsed = Number.parseFloat(value.replace(",", "."));
     if (Number.isNaN(parsed) || parsed < 0) {
-      setValue(String(bytesToGb(user.private_limit_bytes)));
+      setValue(String(displayValue));
       return;
     }
 
-    if (parsed === bytesToGb(user.private_limit_bytes)) {
+    if (parsed === displayValue) {
       return;
     }
 
     setIsSaving(true);
     try {
-      await updateUserPrivateQuota(user.id, parsed);
-      onSaved();
+      await onSave(parsed);
     } catch {
-      setValue(String(bytesToGb(user.private_limit_bytes)));
+      setValue(String(displayValue));
     } finally {
       setIsSaving(false);
     }
@@ -134,7 +149,7 @@ function PrivateQuotaInput({ user, onSaved }: QuotaInputProps) {
     <input
       type="number"
       min={0}
-      step={0.1}
+      step={step}
       value={value}
       disabled={isSaving}
       onChange={(event) => setValue(event.target.value)}
@@ -145,7 +160,35 @@ function PrivateQuotaInput({ user, onSaved }: QuotaInputProps) {
         }
       }}
       className="w-20 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500/50 disabled:opacity-50"
-      aria-label={`Private quota for ${user.email}`}
+      aria-label={ariaLabel}
+    />
+  );
+}
+
+function TotalQuotaInput({ user, onSaved }: QuotaInputProps) {
+  return (
+    <NumericQuotaInput
+      displayValue={bytesToMb(user.limit_bytes)}
+      step={1}
+      ariaLabel={`Total quota for ${user.email}`}
+      onSave={async (limitMb) => {
+        await updateUserQuota(user.id, { limit_mb: limitMb });
+        onSaved();
+      }}
+    />
+  );
+}
+
+function PrivateQuotaInput({ user, onSaved }: QuotaInputProps) {
+  return (
+    <NumericQuotaInput
+      displayValue={bytesToGb(user.private_limit_bytes)}
+      step={0.1}
+      ariaLabel={`Private quota for ${user.email}`}
+      onSave={async (privateLimitGb) => {
+        await updateUserQuota(user.id, { private_limit_gb: privateLimitGb });
+        onSaved();
+      }}
     />
   );
 }
@@ -311,6 +354,9 @@ export default function AdminPage() {
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">Status</th>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">Used</th>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">
+                  Total quota (MB)
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-zinc-400">
                   Private quota (GB)
                 </th>
                 <th className="px-4 py-3 text-left font-medium text-zinc-400">Registered</th>
@@ -320,13 +366,13 @@ export default function AdminPage() {
             <tbody className="divide-y divide-zinc-800 bg-zinc-950/50">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-zinc-500">
                     Loading...
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-zinc-500">
                     No users found
                   </td>
                 </tr>
@@ -348,6 +394,9 @@ export default function AdminPage() {
                     </td>
                     <td className="px-4 py-3 text-zinc-300">
                       {formatBytes(user.quota_used_bytes, false)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <TotalQuotaInput user={user} onSaved={() => void fetchUsers()} />
                     </td>
                     <td className="px-4 py-3">
                       <PrivateQuotaInput user={user} onSaved={() => void fetchUsers()} />

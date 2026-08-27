@@ -57,7 +57,7 @@ Presentation -> Application + Infrastructure.
 | `CacheDBSettings` | `REDIS_URL` | Подключение Redis |
 | `StorageSettings` | `STORAGE_DISKS`, `STORAGE_ROOT`, `DISK_STRATEGY`, `DISK_SPACE_CACHE_TTL`, `MIN_FREE_SPACE_MB` | Настройки дисков |
 | `AuthSettings` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_URL`, `JWT_SECRET`, `SESSION_TTL_SECONDS`, `PRIVATE_SESSION_TTL_HOURS` | Аутентификация |
-| `BusinessLogicSettings` | `PHOTO_BATCH_SIZE`, `THUMBNAIL_MAX_PX`, `STRANGER_QUOTA_MB`, `ARCHIVE_DAYS_THRESHOLD` | Бизнес-логика |
+| `BusinessLogicSettings` | `PHOTO_BATCH_SIZE`, `THUMBNAIL_MAX_PX`, `DEFAULT_USER_QUOTA_MB` (alias `STRANGER_QUOTA_MB`), `ARCHIVE_DAYS_THRESHOLD` | Бизнес-логика |
 | `AdminSettings` | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Admin-аккаунт |
 | `LoggingSettings` | `LOG_LEVEL`, `LOG_FILE_ENABLED`, `LOG_FILE_PATH`, `LOG_FILE_ROTATION`, `LOG_FILE_RETENTION` | Логирование |
 
@@ -97,7 +97,7 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 - `PENDING` -> файл в процессе загрузки; если старше 1 часа — чистится фоновой задачей
 
 **StorageQuota** (`dataclass`): used_bytes, limit_bytes. Методы: `available_bytes()`,
-`is_exceeded()`.
+`is_exceeded()`, `is_unlimited()`, `would_exceed()`. `limit_bytes = 0` means unlimited.
 
 **ErrorCode** (`StrEnum`): `QUOTA_EXCEEDED`, `UNSUPPORTED_FORMAT`, `PRIVATE_SESSION_EXPIRED`,
 `DISK_UNAVAILABLE`, `PATH_TRAVERSAL_DETECTED`, `FILE_NOT_FOUND`, `ACCESS_DENIED`,
@@ -162,7 +162,7 @@ ORM-модели SQLAlchemy 2.0 (mapped_column):
 
 **UserQuotaUsage** (user_quota_usage)
 - user_id: UUID PK FK
-- total_bytes, private_bytes, private_limit_bytes, photos_bytes: BigInteger default=0
+- total_bytes, limit_bytes (default 100 MiB), private_bytes, private_limit_bytes, photos_bytes: BigInteger
 - updated_at: DateTime TZ onupdate=now
 
 **UploadSession** (upload_sessions) — зарезервировано для chunked upload
@@ -196,6 +196,7 @@ ORM-модели SQLAlchemy 2.0 (mapped_column):
 - increment(user_id, size_bytes, section)
 - decrement(user_id, size_bytes, section)
 - reset_private_usage(user_id)
+- update_limit(user_id, limit_bytes)
 - update_private_limit(user_id, limit_bytes)
 - update_total_bytes(user_id, total_bytes)
 - list_all_user_ids
@@ -403,7 +404,7 @@ Singleton через `get_session_store()`. Хранит:
 
 - `list_users(page, limit, role_filter, email_search)` -> {items, total}
 - `update_role(admin_id, target_id, new_role)` -> User (self-check)
-- `update_private_quota(admin_id, target_id, limit_gb)` -> None
+- `update_user_quota(admin_id, target_id, principals, limit_mb=, private_limit_gb=)` -> None
 - `block_user(admin_id, target_id)` -> None
 - `delete_user(admin_id, target_id)` -> None (удаляет файлы на всех дисках)
 - `get_storage_stats()` -> {disks: [{id, mount_path, total, used, free, status}]}
@@ -521,7 +522,7 @@ Endpoints: GET / (status), GET /health
 |---|---|---|
 | GET | /me | Квота текущего пользователя. 200 + QuotaResponse |
 
-Лимит: STRANGER = STRANGER_QUOTA_MB (fixed). FAMILY/ADMIN = свободное место всех дисков.
+Лимит: `user_quota_usage.limit_bytes` для всех ролей (по умолчанию `DEFAULT_USER_QUOTA_MB` = 100; `0` = без ограничения). Не свободное место диска.
 
 #### AdminRouter (`/api/admin`)
 
@@ -531,7 +532,7 @@ Endpoints: GET / (status), GET /health
 |---|---|---|
 | GET | /users | Список пользователей (paginated, filters). 200 + UserListResponse |
 | PATCH | /users/{id}/role | Смена роли. 200 + UpdateRoleResponse |
-| PATCH | /users/{id}/quota | Лимит приватного. 204 |
+| PATCH | /users/{id}/quota | Общий лимит (`limit_mb`) и/или приватный (`private_limit_gb`). 204 |
 | POST | /users/{id}/block | Блокировка. 204 |
 | DELETE | /users/{id} | Удаление пользователя. 204 |
 | GET | /storage | Статистика дисков. 200 + StorageStatsResponse |
@@ -556,7 +557,7 @@ Pydantic схемы для запросов и ответов:
 | private.py | UnlockRequest, UnlockResponse, PrivateQuotaResponse, PrivateSessionResponse |
 | photos.py | PhotoItemResponse, PhotoListResponse |
 | quota.py | QuotaResponse |
-| admin.py | UpdateRoleRequest, UpdateRoleResponse, UpdatePrivateQuotaRequest, UserAdminViewResponse,
+| admin.py | UpdateRoleRequest, UpdateRoleResponse, UpdateUserQuotaRequest, UserAdminViewResponse,
 UserListResponse, DiskStatResponse, StorageHealthResponse, ArchiveReportResponse,
 ArchiveStatsResponse, MaintenanceRunResponse, MaintenanceStatsResponse, ReconcileReportResponse,
 BackupRunResponse, BackupEntryResponse, BackupListResponse |

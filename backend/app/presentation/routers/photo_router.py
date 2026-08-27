@@ -124,10 +124,8 @@ async def upload_photo(
     try:
         await _ensure_upload_quota(
             current_user.id,
-            current_user.role,
             file_size,
             quota_repo,
-            get_settings(),
         )
         record = await photo_service.upload_photo(
             user_id=current_user.id,

@@ -33,7 +33,7 @@ from app.presentation.schemas.admin import (
     ReconcileReportResponse,
     StorageHealthResponse,
     StorageStatsResponse,
-    UpdatePrivateQuotaRequest,
+    UpdateUserQuotaRequest,
     UserAdminViewResponse,
     UserListResponse,
 )
@@ -111,10 +111,10 @@ async def update_user_role(
 
 
 @router.patch("/users/{user_id}/quota", status_code=status.HTTP_204_NO_CONTENT)
-async def update_user_private_quota(
+async def update_user_quota(
     request: Request,
     user_id: UUID,
-    body: UpdatePrivateQuotaRequest,
+    body: UpdateUserQuotaRequest,
     admin: User = Depends(check_role(Role.ADMIN)),
     auth_validator: AuthValidator = Depends(get_auth_validator),
     admin_service: AdminService = Depends(get_admin_service),
@@ -127,11 +127,12 @@ async def update_user_private_quota(
             session_id,
             settings.auth_grpc.caller_host,
         )
-        await admin_service.update_private_quota(
+        await admin_service.update_user_quota(
             admin.id,
             user_id,
-            body.private_limit_gb,
             principals,
+            limit_mb=body.limit_mb,
+            private_limit_gb=body.private_limit_gb,
         )
         await session.commit()
     except UserNotFoundError as exc:

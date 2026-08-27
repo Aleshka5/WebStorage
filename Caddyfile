@@ -3,7 +3,13 @@ https://filenkov.store {
     # --- Reverse proxy ---
     # /api/*, /docs, /openapi.json, /redoc -> backend (FastAPI)
     @api path /api/* /docs /openapi.json /redoc
-    reverse_proxy @api app:8000
+    reverse_proxy @api app:8000 {
+        transport http {
+            read_timeout 30m
+            write_timeout 30m
+            response_header_timeout 30m
+        }
+    }
 
     # /app/* -> frontend (Vite / static build)
     @app path /app/*

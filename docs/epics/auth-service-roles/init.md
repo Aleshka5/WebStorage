@@ -315,7 +315,7 @@ Suggested vars:
 - **Do not** use local `users.role` for authorization. Set `User.role` on the domain object from `storage_roles` for this request (memory), even if a denormalized DB column still exists during migration.
 - `check_role()` unchanged in behavior: compares `current_user.role` to allowed roles.
 - Public routes stay public: `/`, `/health`, and the **new** unauthenticated login redirect helper if any.
-- Quota resolution still uses `Role` VO (`STRANGER_QUOTA_MB` vs free disk).
+- Quota resolution uses stored `user_quota_usage.limit_bytes` (all roles; default `DEFAULT_USER_QUOTA_MB`). Role no longer selects a disk-free ceiling.
 
 **Tests:**
 
