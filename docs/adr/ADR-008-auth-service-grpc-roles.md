@@ -1,6 +1,6 @@
 # ADR-008: Auth-Service owns product session + `storage_roles`
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-009](./ADR-009-gateway-headers-user-service.md)
 - **Date:** 2026-08-19
 - **Deciders:** team
 - **Related:** Epic [E-AUTHZ](../epics/auth-service-roles/init.md), [ADR-001](./ADR-001-clean-architecture.md), [ADR-003](./ADR-003-jwt-httponly-cookie.md) (product JWT issuance superseded), [ADR-004](./ADR-004-private-key-redis-ttl.md) (TTL unchanged; Redis key input follows `auth_session`), Master Document §3 / §8, TZ login / `AuthService`

@@ -6,7 +6,6 @@ from app.infrastructure.database.models import (
     UploadSession,
     User,
     UserQuotaUsage,
-    UserRole,
 )
 
 __all__ = [
@@ -17,5 +16,4 @@ __all__ = [
     "UploadSession",
     "User",
     "UserQuotaUsage",
-    "UserRole",
 ]

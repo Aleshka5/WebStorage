@@ -39,8 +39,6 @@ def _family_user() -> User:
     return User(
         id=USER_ID,
         email="family@example.test",
-        password_hash=None,
-        google_id=None,
         role=Role.FAMILY,
         is_active=True,
         created_at=datetime.now(UTC),

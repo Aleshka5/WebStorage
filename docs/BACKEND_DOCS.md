@@ -3,14 +3,16 @@
 ## Overview
 
 **HomeCloud** — самохостируемое сетевое хранилище (Home Cloud Storage), построенное на
-Python 3.12 + FastAPI. Приложение развертывается через Docker и предоставляет REST API для
-веб-интерфейса (React SPA).
+Python 3.12 + FastAPI. Идентичность — заголовки шлюза + User-Service (без gRPC).
+Данные — Common Postgres / Redis / MinIO (один bucket `storage`). Production `app`
+отдаёт API и собранный SPA.
 
 ### Стек технологий
 
 - Web Framework: FastAPI (async)
 - ORM: SQLAlchemy 2.0 (async, asyncpg)
 - БД: PostgreSQL
+- Объектное хранилище: MinIO (S3 API)
 - Кэш / сессии: Redis (aioredis)
 - Конфигурация: pydantic-settings
 - Шифрование: cryptography (AES-256-GCM)
@@ -55,7 +57,8 @@ Presentation -> Application + Infrastructure.
 |---|---|---|
 | `DatabaseSettings` | `DATABASE_URL` | Подключение PostgreSQL |
 | `CacheDBSettings` | `REDIS_URL` | Подключение Redis |
-| `StorageSettings` | `STORAGE_DISKS`, `STORAGE_ROOT`, `DISK_STRATEGY`, `DISK_SPACE_CACHE_TTL`, `MIN_FREE_SPACE_MB` | Настройки дисков |
+| `StorageSettings` | `STORAGE_DISKS`, `DISK_STRATEGY`, `DISK_SPACE_CACHE_TTL`, `MIN_FREE_SPACE_MB` | Логические диски (1:1 с MinIO buckets) |
+| `S3Settings` | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION`, `S3_USE_SSL`, `S3_BUCKET_PREFIX`, `S3_PATH_STYLE` | MinIO / S3 |
 | `AuthSettings` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_URL`, `JWT_SECRET`, `SESSION_TTL_SECONDS`, `PRIVATE_SESSION_TTL_HOURS` | Аутентификация |
 | `BusinessLogicSettings` | `PHOTO_BATCH_SIZE`, `THUMBNAIL_MAX_PX`, `DEFAULT_USER_QUOTA_MB` (alias `STRANGER_QUOTA_MB`), `ARCHIVE_DAYS_THRESHOLD` | Бизнес-логика |
 | `AdminSettings` | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Admin-аккаунт |
@@ -81,7 +84,7 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 |---|---|---|
 | `User` | id, email, password_hash, google_id, role, is_active, created_at | Frozen dataclass |
 | `FileRecord` | id, user_id, disk_id, relative_path, original_name, size_bytes, mime_type, is_encrypted, section, status, checksum_sha256, created_at, last_accessed_at, is_archived, archive_path | Frozen dataclass |
-| `DiskVolume` | id, mount_path, priority, is_active | Frozen dataclass |
+| `DiskVolume` | id, bucket, priority, is_active | Frozen dataclass; `bucket` = `{S3_BUCKET_PREFIX}{id}` |
 
 ### Value Objects
 
@@ -119,6 +122,8 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 | `AccessDeniedError` | Нет прав доступа | 403 |
 | `UnsupportedFormatError` | Неподдерживаемый формат файла | 400 |
 | `PrivateSessionExpiredError` | Ключ шифрования истёк | 401 |
+| `KeysValidationError` | Пустое/дублирующееся имя или значение ключа | 400 |
+| `KeysYamlInvalidError` | `keys.yaml` невалиден или не mapping | 409 |
 | `UserNotFoundError` | Пользователь не найден | 404 |
 | `SelfRoleChangeError` | Админ пытается сменить свою роль | 403 |
 | `SelfUserDeletionError` | Админ пытается удалить свой аккаунт | 403 |
@@ -207,26 +212,29 @@ ORM-модели SQLAlchemy 2.0 (mapped_column):
 
 #### Base: StorageAdapter (ABC)
 
-Абстрактный класс с защитой от path traversal через `_safe_path()`:
-- `base_path`, `disk_id`, `disk_relative_prefix` (property)
-- `_safe_path(base, user_input)` -> Path (с проверкой relative_to)
+Порт логических ключей (не filesystem Path). Защита от path traversal через `_safe_logical_key()`:
+- `root_prefix`, `disk_id`, `disk_relative_prefix` (property)
+- `_safe_logical_key(user_input)` -> нормализованный ключ без `..`
 - list(path), read(path) -> AsyncIterator[bytes], write(path, data, size) -> checksum
 - delete(path), mkdir(path), rename(old, new), exists(path)
 - `encrypt_path(path)` -> str (identity по умолчанию)
 
-#### PlainStorageAdapter
+Фабрики: `create_storage_adapter(disk_id, root_prefix)` и `build_disk_root_adapter(disk_id)`
+всегда возвращают `S3StorageAdapter`. DI: `build_section_adapter` в
+`presentation/dependencies/storage_factory.py`.
 
-Реализация для нешифрованного хранилища.
-- Загрузка: асинхронная запись через aiofiles с chunk-ами (64KB) + SHA-256
-- Чтение: асинхронный streaming через aiofiles + yield
-- Список: os.scandir в отдельном потоке, сортировка (папки первыми, name case-insensitive)
-- Исключает скрытые файлы (.tmp и файлы, начинающиеся с точки)
-- Автовывод disk_id из структуры пути
+#### S3StorageAdapter
+
+Единственная реализация блоб-хранилища. Объекты в MinIO bucket `{S3_BUCKET_PREFIX}{disk_id}`.
+- Загрузка: streaming PutObject / multipart + SHA-256
+- Чтение: streaming GetObject
+- Список: ListObjectsV2; скрывает `.tmp` и dot-префиксы
+- Ключи изоморфны логическим путям (`users/{user_id}/files/…`)
 
 #### EncryptedStorageAdapter (Decorator)
 
-Обёртка над PlainStorageAdapter. Шифрование AES-256-GCM, имя шифруется и кодируется
-в Base64URL.
+Обёртка над любым `StorageAdapter` (сейчас всегда S3). Шифрование AES-256-GCM, имя шифруется
+и кодируется в Base64URL.
 
 Функции:
 - `derive_encryption_key(passphrase, user_id)` -> 32-byte key (PBKDF2, SHA-256,
@@ -242,7 +250,7 @@ ORM-модели SQLAlchemy 2.0 (mapped_column):
 - `list(path)` -> расшифровывает каждое имя; если не расшифровывается — пропускает
 - `mkdir`, `delete`, `rename`, `exists` — транслируют операции через encrypt_path
 
-Хранение на диске: iv(12B) + chunk_size(4B BE) + ciphertext, повторяется для каждого
+Формат объекта: iv(12B) + chunk_size(4B BE) + ciphertext, повторяется для каждого
 чанка.
 
 ### Маркерный файл
@@ -254,13 +262,16 @@ ORM-модели SQLAlchemy 2.0 (mapped_column):
 
 Файл: `backend/app/infrastructure/disk_router.py`
 
-Конфигурируется из `Settings.storage.*`. При инициализации парсит STORAGE_DISKS (через
-запятую) и создаёт DiskVolume для каждого.
+Конфигурируется из `Settings.storage.*` и `Settings.s3.*`. Парсит `STORAGE_DISKS` (через
+запятую) и создаёт `DiskVolume` с `bucket = {S3_BUCKET_PREFIX}{disk_id}` для каждого.
+
+Ёмкость: `HeadBucket` (доступность), сумма `Size` объектов (used), MinIO Admin API
+`GET /minio/admin/v3/info` (total). Если Admin API недоступен — fallback total = 1 TiB,
+`free ≈ total − used`.
 
 Методы:
-- `get_write_disk()` -> DiskVolume с наибольшим свободным местом (min_free_space_mb
-  проверяется). Использует `_probe_free_space` с fallback на `df -B1` для FUSE/9p.
-- `get_free_space(disk_id)` -> int (кэшируется DISK_SPACE_CACHE_TTL секунд)
+- `get_write_disk()` -> DiskVolume с наибольшим свободным местом (≥ `MIN_FREE_SPACE_MB`)
+- `get_free_space(disk_id)` -> int (кэшируется `DISK_SPACE_CACHE_TTL` секунд)
 - `health_check()` -> dict[str, HEALTHY|LOW_SPACE|UNAVAILABLE]
 - `get_all_disks()`, `get_disk_by_id(disk_id)`, `get_disk_space_stats(disk_id)`
 
@@ -349,6 +360,9 @@ Singleton через `get_session_store()`. Хранит:
   - Записывает в .tmp/{file_id} -> rename -> COMMITTED
   - Инкремент quota, checksum SHA-256
   - Rollback при ошибке (удаляет tmp, удаляет record)
+- `overwrite_file(user_id, path, filename, data, size, section)` -> FileRecord
+  - Если FileRecord на этот path есть — пишет in-place, обновляет size/checksum, quota = delta
+  - Если записи нет (файл удалили в FileManager) — создаёт одну новую, как `upload_file`
 - `download_file(actor_id, file_id)` -> AsyncIterator[bytes]
   - Для архивных: stream_decompressed_archived
   - Иначе: adapter.read(section_path)
@@ -398,6 +412,22 @@ Singleton через `get_session_store()`. Хранит:
 - `get_quota(user_id)` -> {private_bytes, private_limit_bytes}
 - `get_session_status(session_id)` -> {active, expires_in_seconds}
 
+### KeysRegistryService
+
+Файл: `backend/app/application/keys_registry_service.py`
+
+Тот же unlocked encrypted `FileService`, что и Private. Канонический путь: `Keys/keys.yaml`.
+
+- `list_keys(user_id)` -> list[{name, value}]
+  - Создаёт папку `Keys/` если нет
+  - Если `keys.yaml` нет — пишет пустой mapping (`{}`) и один FileRecord
+  - Парсит YAML (flat string map). Невалидный YAML / не mapping → `KeysYamlInvalidError`, файл не перезаписывается
+  - Нестроковые скаляры на чтении приводятся к `str`; вложенные значения отклоняются
+- `save_keys(user_id, keys)` -> list[{name, value}]
+  - Trim; пустые имя/значение и дубликаты имён → `KeysValidationError`
+  - Пишет весь файл через `FileService.overwrite_file` (`sort_keys=False`, `allow_unicode=True`)
+  - Логи: user_id + число ключей, без значений
+
 ### AdminService
 
 Файл: `backend/app/application/admin_service.py`
@@ -407,7 +437,7 @@ Singleton через `get_session_store()`. Хранит:
 - `update_user_quota(admin_id, target_id, principals, limit_mb=, private_limit_gb=)` -> None
 - `block_user(admin_id, target_id)` -> None
 - `delete_user(admin_id, target_id)` -> None (удаляет файлы на всех дисках)
-- `get_storage_stats()` -> {disks: [{id, mount_path, total, used, free, status}]}
+- `get_storage_stats()` -> {disks: [{id, bucket, total_bytes, used_bytes, free_bytes, status}]}
 
 ### ArchiveService
 
@@ -500,6 +530,8 @@ Endpoints: GET / (status), GET /health
 | POST | /reset | Сброс приватного хранилища (только после rate limit). 204 |
 | GET | /quota | Квота приватного раздела |
 | GET | /session | Статус сессии (active, expires_in_seconds) |
+| GET | /keys | Keys Registry: bootstrap `Keys/keys.yaml`, вернуть `{ keys: [{name, value}] }` |
+| PUT | /keys | Keys Registry: валидация + overwrite всего YAML. 200 + тот же payload |
 
 #### SharedRouter (`/api/shared`)
 
@@ -535,7 +567,7 @@ Endpoints: GET / (status), GET /health
 | PATCH | /users/{id}/quota | Общий лимит (`limit_mb`) и/или приватный (`private_limit_gb`). 204 |
 | POST | /users/{id}/block | Блокировка. 204 |
 | DELETE | /users/{id} | Удаление пользователя. 204 |
-| GET | /storage | Статистика дисков. 200 + StorageStatsResponse |
+| GET | /storage | Статистика дисков (`id`, `bucket`, total/used/free, status). 200 + StorageStatsResponse |
 | GET | /storage/health | Health check дисков. 200 + StorageHealthResponse |
 | GET | /archive/run | Запуск архивации. 200 + ArchiveReportResponse |
 | GET | /archive/stats | Статистика архивации. 200 + ArchiveStatsResponse |
@@ -554,7 +586,7 @@ Pydantic схемы для запросов и ответов:
 |---|---|
 | auth.py | LoginRequest, RegisterRequest, UserResponse |
 | files.py | FileNodeResponse, FileRecordResponse, MkdirRequest, RenameRequest, ZipUploadResponse |
-| private.py | UnlockRequest, UnlockResponse, PrivateQuotaResponse, PrivateSessionResponse |
+| private.py | UnlockRequest, UnlockResponse, PrivateQuotaResponse, PrivateSessionResponse, KeyItem, KeysListResponse, KeysPutRequest |
 | photos.py | PhotoItemResponse, PhotoListResponse |
 | quota.py | QuotaResponse |
 | admin.py | UpdateRoleRequest, UpdateRoleResponse, UpdateUserQuotaRequest, UserAdminViewResponse,
@@ -607,33 +639,28 @@ Unhandled exceptions возвращают 500 INTERNAL_ERROR.
 
 ---
 
-## Структура данных на диске
+## Логические ключи объектов (MinIO)
+
+Каждый `STORAGE_DISKS` id — отдельный bucket `{S3_BUCKET_PREFIX}{disk_id}`.
+Ключи изоморфны прежним относительным путям (без физического дерева на диске приложения).
 
 ```
-/storage/                          ← корень (STORAGE_ROOT)
-├── disk1/                         ← STORAGE_DISKS=disk1,disk2
-│   ├── _meta/
-│   ├── shared/
-│   │   ├── photos/
-│   │   └── files/
-│   │       └── {filename}         ← original_name хранится в БД
-│   └── users/
-│       └── {user_id}/
-│           ├── photos/
-│           │   ├── originals/
-│           │   │   └── {uuid}.{ext}
-│           │   └── previews/
-│           │       └── {uuid}_thumb.jpg
-│           ├── files/
-│           │   ├── .tmp/          ← временные файлы во время загрузки
-│           │   │   └── {uuid}
-│           │   └── ...            ← вложенность папок
-│           └── private/
-│               ├── .marker        ← encrypt_blob("HOMECLOUD_MARKER_V1", key)
-│               └── ...            ← зашифрованные файлы и папки (Base64URL имена)
-└── disk2/
-    └── ...
+bucket {S3_BUCKET_PREFIX}disk1/
+├── _meta/backups/                 ← pg_dump + zstd
+├── shared/
+│   └── ...
+└── users/{user_id}/
+    ├── photos/
+    │   ├── originals/{uuid}.{ext}
+    │   └── previews/{uuid}_thumb.jpg
+    ├── files/
+    │   ├── .tmp/{uuid}            ← незакоммиченные загрузки
+    │   └── ...
+    └── private/
+        ├── .marker                ← encrypt_blob("HOMECLOUD_MARKER_V1", key)
+        └── ...                    ← AES-GCM; имена Base64URL
 ```
 
-Архивированные файлы: `{original_path}.zst` (сжатый zstandard).
-Зашифрованные архивы: `{original_path}.enc.zst` (шифрованный zstandard).
+Архивированные объекты: `{original_key}.zst` (zstandard).
+Зашифрованные архивы: `{original_key}.enc.zst`.
+Временные файлы архивации/превью живут в `/tmp` процесса, затем пишутся через адаптер.

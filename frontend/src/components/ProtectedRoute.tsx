@@ -1,30 +1,23 @@
-import { useEffect } from "react";
 import { useAuthStore } from "../store/auth";
-import { redirectToAuthLogin } from "../utils/authLogin";
+import { ErrorMessage } from "./ui/ErrorMessage";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
 }
 
-function RedirectSpinner() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950">
-      <span className="h-8 w-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-    </div>
-  );
-}
-
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const user = useAuthStore((state) => state.user);
 
-  useEffect(() => {
-    if (!user) {
-      redirectToAuthLogin();
-    }
-  }, [user]);
-
   if (!user) {
-    return <RedirectSpinner />;
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
+        <ErrorMessage
+          errorCode="UNAUTHORIZED"
+          message="Open this site through the hub. Storage does not handle sign-in."
+          className="text-center"
+        />
+      </div>
+    );
   }
 
   return children;

@@ -40,7 +40,7 @@ HomeCloud is a Docker-deployable home cloud that gives a family (and invited str
 | Name | HomeCloud |
 | Backend | Python 3.12 + FastAPI (Clean Architecture) |
 | Frontend | React 18 + TypeScript + Vite + Tailwind |
-| Data | PostgreSQL 16 (metadata), filesystem (blobs), Redis (sessions/cache) |
+| Data | PostgreSQL 16 (metadata), MinIO (blobs, S3 API), Redis (sessions/cache) |
 | Auth | Email/password + Google OAuth; JWT in httpOnly cookie. **Planned (E-AUTHZ):** Google via Auth-Service; cookie `auth_session`; roles from gRPC `storage_roles`. |
 | Roles | `STRANGER`, `FAMILY`, `ADMIN` |
 | Sections | Photos, Files, Private (encrypted), Shared, Admin |
@@ -87,23 +87,25 @@ Sidebar shows Shared only for FAMILY/ADMIN and Admin only for ADMIN. Quota bar l
 4. **Logging** — loguru structured JSON; never log passwords, passphrases, or encryption keys.
 5. **Security** — path-traversal guards; rate limits on auth/unlock; private key only in Redis with short TTL.
 
-Key reuse pattern: `FileService` + `PlainStorageAdapter` / `EncryptedStorageAdapter`; frontend `<FileManager mode apiPrefix />`.
+Key reuse pattern: `FileService` + `S3StorageAdapter` / `EncryptedStorageAdapter`; frontend `<FileManager mode apiPrefix />`.
 
 ---
 
 ## 7. Storage Layout
 
+Blobs are MinIO objects. Each `STORAGE_DISKS` id maps to bucket `{S3_BUCKET_PREFIX}{disk_id}`.
+Object keys keep the logical tree (no app bind-mount of `/storage`):
+
 ```
-{STORAGE_ROOT}/{disk_id}/
-├── users/{user_id}/
-│   ├── photos/{originals,previews}/
-│   ├── files/
-│   └── private/          ← AES-256-GCM; .marker for key validation
-├── shared/
-└── _meta/backups/        ← DB dumps (first disk)
+users/{user_id}/
+├── photos/{originals,previews}/
+├── files/
+└── private/          ← AES-256-GCM; .marker for key validation
+shared/
+_meta/backups/        ← DB dumps (first disk bucket)
 ```
 
-Metadata lives in PostgreSQL (`users`, `file_records`, `user_quota_usage`). Blob bytes live on disk. Disk selection for writes: most free space among healthy disks with ≥ `MIN_FREE_SPACE_MB`.
+Metadata lives in PostgreSQL (`users`, `file_records`, `user_quota_usage`). Disk selection for writes: most free space among healthy buckets with ≥ `MIN_FREE_SPACE_MB` (MinIO capacity probes; 1 TiB total fallback if Admin API is down).
 
 ---
 

@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Folder,
+  Key,
   Lock,
   Settings,
   Users,
@@ -24,6 +25,7 @@ const MENU_ITEMS: MenuItem[] = [
   { to: "/photos", label: "Photos", icon: Camera },
   { to: "/files", label: "Files", icon: Folder },
   { to: "/private", label: "Private", icon: Lock },
+  { to: "/keys", label: "Keys Registry", icon: Key },
   { to: "/shared", label: "Shared", icon: Users },
   { to: "/admin", label: "Admin", icon: Settings },
 ];

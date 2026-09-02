@@ -6,7 +6,7 @@ from app.domain.value_objects.role import Role
 
 @dataclass(frozen=True)
 class AuthPrincipal:
-    """Identity projected from Auth-Service Validate / ListUsers (`storage_roles`)."""
+    """Request identity: User-Service UUID + storage role (never hub global_role)."""
 
     id: UUID
     email: str

@@ -88,15 +88,6 @@ class EncryptedStorageAdapter(StorageAdapter):
         return self._inner.root_prefix
 
     @property
-    def base_path(self) -> Path:
-        """FS absolute path when the inner adapter is filesystem-backed."""
-        if not hasattr(self._inner, "base_path"):
-            raise AttributeError(
-                "base_path is only available when the inner adapter is filesystem-backed"
-            )
-        return self._inner.base_path  # type: ignore[attr-defined]
-
-    @property
     def disk_id(self) -> str:
         return self._inner.disk_id
 

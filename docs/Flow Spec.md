@@ -2,7 +2,7 @@
 
 > **Status:** Active  
 > **Related:** [Product Brief.md](./Product%20Brief.md), [API Contract.md](./API%20Contract.md)  
-> **Auth (US-AUTHZ-09):** unauthenticated users redirect to Auth-Service Google OAuth (`return_to` = storage host), not in-app register/login. See [auth-service-roles](./epics/auth-service-roles/init.md).
+> **Auth (E-GWUS):** gateway handles anonymous HTML. The SPA does not redirect to Google. See [gateway-user-service](./epics/gateway-user-service/init.md).
 
 Describes user-visible flows, UI states, and interaction rules for Spec Driven implementation.
 
@@ -14,20 +14,19 @@ Describes user-visible flows, UI states, and interaction rules for Spec Driven i
 App mount
   → fetchMe()
   → loading spinner
-  → 503 AUTH_UNAVAILABLE → error + retry (no OAuth redirect)
+  → 503 USER_SERVICE_UNAVAILABLE → error + retry (no login loop)
+  → 401 → visible error (“Open this site through the hub”)
   → authenticated? → AppLayout + requested route
-  → else → hub login URL (ProtectedRoute / RootRedirect)
 ```
 
-- Authed user visiting `/auth` → redirect `/files`.
-- Guest visiting `/auth` → immediate hub OAuth (`VITE_AUTH_LOGIN_URL`), no local login page.
-- Root `/` → `/files` if authed else hub login URL.
+- Authed user visiting `/` or `/auth` → `/files`.
+- Missing identity → error, not OAuth.
 
 ### Layout states
 
 | Element | Behavior |
 |---|---|
-| Header | Brand + profile menu (logout) |
+| Header | Brand + profile menu (email only; no logout) |
 | Sidebar expanded | Icons + labels + `StorageUsageBar` |
 | Sidebar collapsed | Icons only; quota bar hidden |
 | Nav Shared | Visible FAMILY/ADMIN |
@@ -151,6 +150,44 @@ Private header shows `private_bytes` / `private_limit_bytes`.
 
 ---
 
+## 6a. Keys Registry Flow (`/keys`)
+
+Same private vault as §6. Sidebar item is a **top-level** root (not nested under Private).
+
+```
+Enter /keys
+  → GET /api/private/session
+  → active?
+       yes → GET /api/private/keys (bootstrap Keys/ + keys.yaml) → list
+       no  → PrivateUnlockModal
+```
+
+### Unlock
+
+1. Same modal and passphrase as Private (`POST /api/private/unlock`).
+2. Cancel → `/files`.
+3. Success → `GET /api/private/keys`. First visit creates `Keys/` and empty `keys.yaml` in the private vault.
+
+### Session expiry
+
+`401 PRIVATE_SESSION_EXPIRED` on keys APIs: keep product session, re-open unlock modal (same `homecloud:private-session-expired` event). Do not redirect to hub login.
+
+### List / add / delete / copy / save
+
+| Action | Behavior |
+|---|---|
+| List | Name + masked value (`abcd...wxyz`, or `••••` if length ≤ 8). API returns full values. |
+| Copy | Clipboard gets the full in-memory value. |
+| Add | Modal/form for name + value. Reject empty (trimmed) and duplicate names. No edit of existing rows. |
+| Delete | Local until Save. |
+| Save | Explicit button only. Disabled when pristine. `PUT /api/private/keys` with the full list. Last write wins. |
+
+Invalid `keys.yaml` on disk → show error; do not overwrite on GET. User may fix or replace the file in Private FileManager.
+
+Private reset (§6) wipes `Keys/keys.yaml` with the rest of the vault.
+
+---
+
 ## 7. Admin Flow (`/admin`)
 
 **Actor:** ADMIN. Others → redirect `/files`.
@@ -169,7 +206,7 @@ Not in UI (TZ backlog): unblock, password-reset link.
 
 ### Storage tab
 
-Cards from `GET /api/admin/storage` (total/used/free/status). Health endpoint available for ops.
+Cards from `GET /api/admin/storage` (`id`, `bucket`, total/used/free/status). Health endpoint available for ops.
 
 Ops endpoints (archive/backup/maintenance) exist on API; FE coverage optional — document as admin API flows for curl/ops until UI ships.
 

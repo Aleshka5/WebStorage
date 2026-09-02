@@ -7,10 +7,10 @@ import { ErrorMessage } from "./components/ui/ErrorMessage";
 import AdminPage from "./pages/AdminPage";
 import FilesPage from "./pages/FilesPage";
 import PhotosPage from "./pages/PhotosPage";
+import KeysRegistryPage from "./pages/KeysRegistryPage";
 import PrivatePage from "./pages/PrivatePage";
 import SharedPage from "./pages/SharedPage";
 import { useAuthStore } from "./store/auth";
-import { redirectToAuthLogin } from "./utils/authLogin";
 
 function SessionBootstrap() {
   return (
@@ -20,13 +20,25 @@ function SessionBootstrap() {
   );
 }
 
-function AuthUnavailableScreen({ onRetry }: { onRetry: () => void }) {
+function UserServiceUnavailableScreen({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
-      <ErrorMessage errorCode="AUTH_UNAVAILABLE" className="mb-4 text-center" />
-      <Button type="button" onClick={onRetry} className="max-w-xs">
+      <ErrorMessage errorCode="USER_SERVICE_UNAVAILABLE" className="mb-4 text-center" />
+      <Button type="button" onClick={onRetry} className="w-full max-w-xs">
         Retry
       </Button>
+    </div>
+  );
+}
+
+function UnauthorizedScreen() {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
+      <ErrorMessage
+        errorCode="UNAUTHORIZED"
+        message="Open this site through the hub. Storage does not handle sign-in."
+        className="text-center"
+      />
     </div>
   );
 }
@@ -34,14 +46,8 @@ function AuthUnavailableScreen({ onRetry }: { onRetry: () => void }) {
 function RootRedirect() {
   const user = useAuthStore((state) => state.user);
 
-  useEffect(() => {
-    if (!user) {
-      redirectToAuthLogin();
-    }
-  }, [user]);
-
   if (!user) {
-    return <SessionBootstrap />;
+    return <UnauthorizedScreen />;
   }
 
   return <Navigate to="/files" replace />;
@@ -60,6 +66,7 @@ const router = createBrowserRouter([
       { path: "/files", element: <FilesPage /> },
       { path: "/photos", element: <PhotosPage /> },
       { path: "/private", element: <PrivatePage /> },
+      { path: "/keys", element: <KeysRegistryPage /> },
       { path: "/shared", element: <SharedPage /> },
       { path: "/admin", element: <AdminPage /> },
     ],
@@ -68,7 +75,8 @@ const router = createBrowserRouter([
 
 export function AppRouter() {
   const fetchMe = useAuthStore((state) => state.fetchMe);
-  const authUnavailable = useAuthStore((state) => state.authUnavailable);
+  const userServiceUnavailable = useAuthStore((state) => state.userServiceUnavailable);
+  const unauthorized = useAuthStore((state) => state.unauthorized);
   const [sessionReady, setSessionReady] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
 
@@ -91,14 +99,18 @@ export function AppRouter() {
     return <SessionBootstrap />;
   }
 
-  if (authUnavailable) {
+  if (userServiceUnavailable) {
     return (
-      <AuthUnavailableScreen
+      <UserServiceUnavailableScreen
         onRetry={() => {
           setRetryNonce((value) => value + 1);
         }}
       />
     );
+  }
+
+  if (unauthorized) {
+    return <UnauthorizedScreen />;
   }
 
   return <RouterProvider router={router} />;

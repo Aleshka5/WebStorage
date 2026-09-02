@@ -3,7 +3,7 @@
 > **Status:** Active  
 > **Related:** [API Contract.md](./API%20Contract.md), [Design Spec.md](./Design%20Spec.md)
 
-Metadata is authoritative in PostgreSQL. Blob bytes live on disk volumes. Redis holds ephemeral session material only.
+Metadata is authoritative in PostgreSQL. Blob bytes live in MinIO (S3). Redis holds ephemeral session material only.
 
 ---
 
@@ -15,20 +15,22 @@ users 1──1 user_quota_usage
   ├──* file_records
   └──* upload_sessions   (reserved / unused by services)
 
-Disk volumes are configuration-driven (STORAGE_DISKS), not a DB table.
+One logical volume maps to MinIO bucket `storage`. Object keys stay `users/{id}/…`, `shared/…`, `_meta/backups/`.
 ```
 
 ---
 
 ## 2. Enums
 
-### Role (`STRANGER` | `FAMILY` | `ADMIN`)
+### Role (`STRANGER` | `FAMILY` | `ADMIN` | `BLOCKED`)
+
+Request-time **storage** role from `X-Storage-Role` or User-Service. Not stored on `users`.
 
 | Method / rule | Meaning |
 |---|---|
 | `can_access_shared()` | FAMILY, ADMIN |
 | `can_access_admin()` | ADMIN only |
-| Default on register / first Google | `STRANGER` |
+| `BLOCKED` | `403 ACCESS_DENIED` on every authenticated route |
 
 ### FileSection
 
@@ -61,13 +63,11 @@ Stale `PENDING` older than 1 hour → maintenance cleanup.
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | UUID | PK |
-| `email` | string | Unique |
-| `password_hash` | string \| null | Null for OAuth-only |
-| `google_id` | string \| null | Unique when set |
-| `role` | Role | |
+| `id` | UUID | PK (User-Service UUID) |
+| `email` | string | Unique; upserted from headers / User-Service |
 | `is_active` | bool | Block sets false |
 | `created_at` | datetime | |
+| `role` | Role | **Request-time only** — not a DB column |
 
 ### FileRecord
 
@@ -75,8 +75,8 @@ Stale `PENDING` older than 1 hour → maintenance cleanup.
 |---|---|---|
 | `id` | UUID | PK |
 | `user_id` | UUID | Owner (shared files still have uploader) |
-| `disk_id` | string | e.g. `disk1` |
-| `relative_path` | string | Path under disk root |
+| `disk_id` | string | Logical volume id (`storage`) |
+| `relative_path` | string | Object key under the disk bucket (logical path) |
 | `original_name` | string | May be ciphertext for private |
 | `size_bytes` | int | |
 | `mime_type` | string | |
@@ -93,8 +93,8 @@ Stale `PENDING` older than 1 hour → maintenance cleanup.
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | string | Matches env disk id |
-| `mount_path` | Path | `{STORAGE_ROOT}/{id}` |
+| `id` | string | Always `storage` |
+| `bucket` | string | `S3_BUCKET` (default `storage`) |
 | `priority` | int | Reserved for strategy |
 | `is_active` | bool | |
 
@@ -117,9 +117,6 @@ Helpers: `available_bytes()`, `is_exceeded()`, `is_unlimited()`, `would_exceed()
 |---|---|
 | `id` | UUID PK |
 | `email` | String(255) unique, indexed |
-| `password_hash` | String(255) nullable |
-| `google_id` | String(255) unique, indexed, nullable |
-| `role` | Enum default `STRANGER` |
 | `is_active` | Boolean default true |
 | `created_at` | timestamptz server default now |
 
@@ -156,17 +153,20 @@ Not used by current application services.
 
 ---
 
-## 5. Filesystem Layout Mapping
+## 5. Object Key Layout (MinIO)
 
-| Section | Path pattern |
+All keys live in the single MinIO bucket `storage`. Paths are POSIX-style object keys.
+
+| Section | Key pattern |
 |---|---|
-| Photos originals | `{disk}/users/{user_id}/photos/originals/{id}{ext}` |
-| Photos previews | `{disk}/users/{user_id}/photos/previews/{id}_thumb.jpg` |
-| Files | `{disk}/users/{user_id}/files/{relative}` |
-| Private | `{disk}/users/{user_id}/private/{encrypted_relative}` + `.marker` |
-| Shared | `{disk}/shared/{relative}` |
-| DB backups | `{first_disk}/_meta/backups/db_backup_*.sql.zst` |
-| Archive temp | `{disk}/.archive_tmp/` |
+| Photos originals | `users/{user_id}/photos/originals/{id}{ext}` |
+| Photos previews | `users/{user_id}/photos/previews/{id}_thumb.jpg` |
+| Files | `users/{user_id}/files/{relative}` |
+| Private | `users/{user_id}/private/{encrypted_relative}` + `.marker` |
+| Keys Registry | Same private vault; logical path `Keys/keys.yaml` (normal `FileRecord`, section `PRIVATE`) |
+| Shared | `shared/{relative}` |
+| DB backups | `_meta/backups/db_backup_*.sql.zst` (bucket `storage`) |
+| Archive / thumbnail staging | process `/tmp` only; persisted via `StorageAdapter` |
 
 ---
 
@@ -174,13 +174,10 @@ Not used by current application services.
 
 | Prefix | Payload | TTL |
 |---|---|---|
-| `private_key:` | Encoded AES key for session | `PRIVATE_SESSION_TTL_HOURS` (sliding) |
-| `oauth_state:` | CSRF state | 600s |
-| `oauth_ticket:` | One-time login bridge | 120s |
-| `auth_rate:` | Login/register counters | window |
+| `private_key:{auth_session}` | Encoded AES key for the vault | `PRIVATE_SESSION_TTL_HOURS` |
 | `unlock_attempts:` | Private unlock attempts | ~900s |
 
-Keying private session by JWT cookie value binds vault unlock to the auth cookie without storing passphrase.
+Identity does not come from this cookie. Logout is not implemented here; hub logout makes the sid unreachable.
 
 ---
 
@@ -192,7 +189,8 @@ Keying private session by JWT cookie value binds vault unlock to the auth cookie
 | `FileNode` | `name`, `is_dir`, `size`, `modified_at`, `path`, `uploaded_by?` |
 | `PhotoItem` | `id`, `preview_url`, `original_url`, `created_at`, `size` |
 | `QuotaResponse` | `used_bytes`, `limit_bytes`, `private_bytes`, `private_limit_bytes` |
-| `DiskStat` | id, total/used/free bytes, status |
+| `KeysListResponse` | `keys: [{ name, value }]` (full values; flat YAML map on disk) |
+| `DiskStat` | id, bucket, total/used/free bytes, status |
 | `UserAdminView` | identity + role + activity + usage/limits |
 
 Frontend mirrors: `types/files.ts`, `types/photos.ts`, auth store `User`.
@@ -201,12 +199,12 @@ Frontend mirrors: `types/files.ts`, `types/photos.ts`, auth store `User`.
 
 ## 8. Invariants
 
-1. A committed file has matching FS object (or archive path if archived).
+1. A committed file has a matching MinIO object (or archive key if archived).
 2. Quota counters must not go negative; reconcile repairs drift.
 3. Private names/content unreadable without session key.
 4. Total usage ≤ `user_quota_usage.limit_bytes` for every role, unless `limit_bytes` is `0` (unlimited).
 5. Shared ACL: delete only by owner or ADMIN.
-6. Soft domain rules: admin cannot delete self or demote/change own role via admin API.
+6. Soft domain rules: admin cannot delete self. Role writes are 410 (User-Service).
 
 ---
 
@@ -218,5 +216,6 @@ Alembic under `backend/alembic/versions/`:
 - `002_add_google_id`
 - `003_add_private_limit_bytes`
 - `004_add_user_limit_bytes` — per-user total cap (default 100 MiB)
+- `005_drop_users_role_and_legacy_auth` — drop `users.role`, `password_hash`, `google_id`
 
 Entrypoint runs `alembic upgrade head` on container start.

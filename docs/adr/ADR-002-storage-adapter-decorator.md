@@ -1,8 +1,8 @@
-# ADR-002: Plain + Encrypted storage adapter decorator
+# ADR-002: Encrypted storage adapter decorator
 
 - **Status:** Accepted
 - **Date:** 2026-06-01
-- **Related:** TZ §6.4, `PlainStorageAdapter`, `EncryptedStorageAdapter`, FE `FileManager`
+- **Related:** TZ §6.4, `StorageAdapter`, `S3StorageAdapter`, `EncryptedStorageAdapter`, FE `FileManager`
 
 ## Context
 
@@ -10,7 +10,7 @@ Files and Private sections share the same UX (list/upload/mkdir/…). Duplicatin
 
 ## Decision
 
-- Backend: `EncryptedStorageAdapter` decorates `PlainStorageAdapter` (AES-256-GCM + encrypted names).
+- Backend: `EncryptedStorageAdapter` decorates any `StorageAdapter` (AES-256-GCM + encrypted names). The inner adapter is `S3StorageAdapter` (MinIO).
 - `FileService` depends on the adapter abstraction, not encryption details.
 - Frontend: one `FileManager` with `mode: 'plain' | 'encrypted'` and `apiPrefix`.
 
@@ -18,13 +18,13 @@ Files and Private sections share the same UX (list/upload/mkdir/…). Duplicatin
 
 ### Positive
 
-- Shared and Files reuse plain path; Private swaps adapter/prefix only.
+- Shared and Files reuse the plain (unencrypted) S3 path; Private swaps adapter/prefix only.
 - Encryption bugs stay localized to one adapter.
 
 ### Negative / Trade-offs
 
 - Debugging encrypted filenames requires unlock session.
-- Some FS-level tools cannot inspect private trees meaningfully.
+- Object-store tools cannot inspect private trees meaningfully without the session key.
 
 ## Alternatives Considered
 

@@ -1,5 +1,4 @@
 import axios, { isAxiosError } from "axios";
-import { redirectToAuthLogin, shouldRedirectToHubOnUnauthorized } from "../utils/authLogin";
 
 export const PRIVATE_SESSION_EXPIRED_EVENT = "homecloud:private-session-expired";
 export const EVENT_PRIVATE_EXPIRED = PRIVATE_SESSION_EXPIRED_EVENT;
@@ -37,27 +36,10 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    const status = error.response.status;
     const errorCode = getApiErrorDetail(error)?.error_code;
 
-    if (status === 503) {
-      return Promise.reject(error);
-    }
-
-    if (status === 401 && errorCode === "PRIVATE_SESSION_EXPIRED") {
+    if (error.response.status === 401 && errorCode === "PRIVATE_SESSION_EXPIRED") {
       window.dispatchEvent(new CustomEvent(PRIVATE_SESSION_EXPIRED_EVENT));
-      return Promise.reject(error);
-    }
-
-    if (
-      shouldRedirectToHubOnUnauthorized(
-        status,
-        errorCode,
-        error.config?.url,
-        window.location.pathname,
-      )
-    ) {
-      redirectToAuthLogin();
     }
 
     return Promise.reject(error);

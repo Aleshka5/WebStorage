@@ -8,8 +8,8 @@ Directories are modeled as:
    (created by ``mkdir`` so empty folders are visible).
 
 Object keys are isomorphic to FS relative paths under the disk root:
-``{root_prefix}/{normalized_section_path}`` inside bucket
-``{S3_BUCKET_PREFIX}{disk_id}``.
+``{root_prefix}/{normalized_section_path}`` inside the single bucket
+``S3_BUCKET`` (default ``storage``).
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ import hashlib
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import aioboto3
@@ -57,15 +56,9 @@ class S3StorageAdapter(StorageAdapter):
         client_factory: Callable[[], Any] | None = None,
     ) -> None:
         settings = get_settings()
-        if settings.storage.backend != "s3":
-            logger.warning(
-                "S3StorageAdapter created while STORAGE_BACKEND={!r} (expected 's3')",
-                settings.storage.backend,
-            )
-
         self._disk_id = disk_id
         self._root_prefix = root_prefix.strip().strip("/")
-        self._bucket = f"{settings.s3.bucket_prefix}{disk_id}"
+        self._bucket = settings.s3.bucket
         self._endpoint_url = settings.s3.endpoint_url or None
         self._access_key = settings.s3.access_key
         self._secret_key = settings.s3.secret_key
@@ -792,47 +785,18 @@ class S3StorageAdapter(StorageAdapter):
 def create_storage_adapter(
     disk_id: str,
     root_prefix: str,
-    *,
-    base_path: Path | None = None,
 ) -> StorageAdapter:
-    """Optional factory: select FS or S3 adapter from ``get_settings().storage.backend``.
-
-    Full DI wiring remains US-S3-05; this helper is for callers that opt in early.
-    """
-    from app.infrastructure.storage.plain_adapter import PlainStorageAdapter
-
-    settings = get_settings()
-    if settings.storage.backend == "s3":
-        return S3StorageAdapter(disk_id=disk_id, root_prefix=root_prefix)
-
-    if base_path is None:
-        raise ValueError("base_path is required when STORAGE_BACKEND=fs")
-    return PlainStorageAdapter(base_path, disk_id=disk_id)
+    """Return an S3 adapter for the given disk and logical prefix."""
+    return S3StorageAdapter(disk_id=disk_id, root_prefix=root_prefix)
 
 
 def build_disk_root_adapter(disk_id: str) -> StorageAdapter:
-    """Adapter scoped to a whole disk (empty root prefix / mount root).
+    """Adapter scoped to a whole disk (empty root prefix).
 
     Used by archive, backup, and maintenance for disk-relative keys such as
     ``users/...``, ``shared/...``, and ``_meta/backups/...``.
     """
-    from app.infrastructure.disk_router import DiskRouter
-
-    settings = get_settings()
-    base_path: Path | None = None
-    if settings.storage.backend == "fs":
-        disk = DiskRouter(settings).get_disk_by_id(disk_id)
-        base_path = disk.mount_path
-
-    adapter = create_storage_adapter(
-        disk_id=disk_id,
-        root_prefix="",
-        base_path=base_path,
-    )
-    logger.info(
-        "Disk-root storage adapter ready: backend={}, disk_id={}",
-        settings.storage.backend,
-        disk_id,
-    )
+    adapter = create_storage_adapter(disk_id=disk_id, root_prefix="")
+    logger.info("Disk-root storage adapter ready: disk_id={}", disk_id)
     return adapter
 

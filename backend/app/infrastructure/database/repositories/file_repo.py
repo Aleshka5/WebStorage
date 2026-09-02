@@ -85,6 +85,27 @@ class FileRepository:
         logger.info("Updated file record {} status to {}", file_id, status.value)
         return self._to_entity(model)
 
+    async def update_size(
+        self,
+        file_id: UUID,
+        size_bytes: int,
+        *,
+        checksum_sha256: str | None = None,
+    ) -> FileRecordEntity | None:
+        model = await self._session.get(FileRecordModel, file_id)
+        if model is None:
+            logger.warning("File record {} not found for size update", file_id)
+            return None
+
+        model.size_bytes = size_bytes
+        if checksum_sha256 is not None:
+            model.checksum_sha256 = checksum_sha256
+
+        await self._session.flush()
+        await self._session.refresh(model)
+        logger.info("Updated file record {} size to {} bytes", file_id, size_bytes)
+        return self._to_entity(model)
+
     async def get_committed_by_relative_path(
         self,
         user_id: UUID,

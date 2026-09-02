@@ -52,7 +52,7 @@ class UpdateUserQuotaRequest(BaseModel):
 
 class DiskStatResponse(BaseModel):
     id: str
-    mount_path: str
+    bucket: str
     total_bytes: int = Field(ge=0)
     used_bytes: int = Field(ge=0)
     free_bytes: int = Field(ge=0)
@@ -62,7 +62,7 @@ class DiskStatResponse(BaseModel):
     def from_stat(cls, stat: DiskStat) -> "DiskStatResponse":
         return cls(
             id=stat.id,
-            mount_path=stat.mount_path,
+            bucket=stat.bucket,
             total_bytes=stat.total_bytes,
             used_bytes=stat.used_bytes,
             free_bytes=stat.free_bytes,

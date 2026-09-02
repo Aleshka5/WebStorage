@@ -163,6 +163,7 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
             <Button
               type="button"
               variant="danger"
+              className="w-full"
               onClick={handleReset}
               isLoading={isResetting}
               disabled={isSubmitting}

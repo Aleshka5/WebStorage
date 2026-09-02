@@ -1,5 +1,4 @@
 from functools import lru_cache
-from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,7 +8,7 @@ class DatabaseSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     url: str = Field(
-        default="postgresql+asyncpg://homecloud:changeme@db:5432/homecloud",
+        default="postgresql+asyncpg://storage:changeme@postgres:5432/db_storage",
         validation_alias="DATABASE_URL",
     )
 
@@ -23,13 +22,6 @@ class CacheDBSettings(BaseSettings):
 class StorageSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    backend: Literal["fs", "s3"] = Field(
-        default="fs",
-        validation_alias="STORAGE_BACKEND",
-        description="Blob storage backend selector: 'fs' (local filesystem) or 's3' (MinIO/S3).",
-    )
-    disks: str = Field(default="disk1", validation_alias="STORAGE_DISKS")
-    root: str = Field(default="/storage", validation_alias="STORAGE_ROOT")
     disk_strategy: str = Field(default="most_free_space", validation_alias="DISK_STRATEGY")
     disk_space_cache_ttl: int = Field(default=30, validation_alias="DISK_SPACE_CACHE_TTL")
     min_free_space_mb: int = Field(default=500, validation_alias="MIN_FREE_SPACE_MB")
@@ -47,16 +39,10 @@ class S3Settings(BaseSettings):
     secret_key: str = Field(default="", validation_alias="S3_SECRET_KEY")
     region: str = Field(default="us-east-1", validation_alias="S3_REGION")
     use_ssl: bool = Field(default=False, validation_alias="S3_USE_SSL")
-    bucket_prefix: str = Field(
-        default="",
-        validation_alias="S3_BUCKET_PREFIX",
-        description=(
-            "Optional prefix for per-disk MinIO buckets, aligned 1:1 with STORAGE_DISKS. "
-            "Bucket for a disk_id is `{prefix}{disk_id}` when prefix is set "
-            "(e.g. prefix 'hc-' + disk 'disk1' → bucket 'hc-disk1'); "
-            "when empty, each STORAGE_DISKS entry is used as the bucket name directly. "
-            "Sticky FileRecord.disk_id placement is preserved — no rebalance across buckets."
-        ),
+    bucket: str = Field(
+        default="storage",
+        validation_alias="S3_BUCKET",
+        description="Single MinIO bucket for all object keys (users/, shared/, _meta/backups/).",
     )
     path_style: bool = Field(
         default=True,
@@ -66,67 +52,38 @@ class S3Settings(BaseSettings):
 
 
 class AuthSettings(BaseSettings):
+    """Vault cookie only. Identity comes from gateway headers / User-Service."""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    google_client_id: str = Field(default="", validation_alias="GOOGLE_CLIENT_ID")
-    google_client_secret: str = Field(default="", validation_alias="GOOGLE_CLIENT_SECRET")
-    google_redirect_uri: str = Field(
-        default="http://localhost:8000/api/auth/google/callback",
-        validation_alias="GOOGLE_REDIRECT_URI",
+    cookie_name: str = Field(
+        default="auth_session",
+        validation_alias="AUTH_COOKIE_NAME",
+        description="Companion cookie used as the private-vault Redis key (not identity).",
     )
-    frontend_url: str = Field(default="http://localhost:5173", validation_alias="FRONTEND_URL")
-    jwt_secret: str = Field(default="change-me", validation_alias="JWT_SECRET")
-    session_ttl_seconds: int = Field(default=86400, validation_alias="SESSION_TTL_SECONDS")
     private_session_ttl_hours: int = Field(
         default=4,
         validation_alias="PRIVATE_SESSION_TTL_HOURS",
     )
 
 
-class AuthGrpcSettings(BaseSettings):
-    """Auth-Service gRPC client settings (US-AUTHZ-03). JWT/Google stay on AuthSettings."""
-
+class UserServiceSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    addr: str = Field(
-        default="api:9090",
-        validation_alias="AUTH_GRPC_ADDR",
-        description=(
-            "gRPC dial target for Auth-Service (compose DNS or host). "
-            "Do not publish port 9090 on the public host."
-        ),
-    )
-    caller_host: str = Field(
-        default="storage.filenkov.store",
-        validation_alias="AUTH_CALLER_HOST",
-        description=(
-            "Caller host sent to Auth-Service Validate. Must match the Auth-Service "
-            "whitelist key after scheme, port, and path are stripped "
-            "(e.g. https://storage.filenkov.store:443/files → storage.filenkov.store)."
-        ),
-    )
-    cookie_name: str = Field(
-        default="auth_session",
-        validation_alias="AUTH_COOKIE_NAME",
-        description="Browser cookie name; must match Auth-Service COOKIE_NAME.",
+    url: str = Field(
+        default="http://user_service:8000",
+        validation_alias="USER_SERVICE_URL",
+        description="User-Service base URL on user_network. No JWT.",
     )
     timeout_ms: int = Field(
         default=2000,
-        validation_alias="AUTH_GRPC_TIMEOUT_MS",
-        description="Per-request gRPC deadline in milliseconds.",
+        validation_alias="USER_SERVICE_TIMEOUT_MS",
+        description="HTTP timeout for User-Service calls.",
     )
-    login_url: str = Field(
-        default="https://filenkov.store/oauth/google?return_to=https://storage.filenkov.store/",
-        validation_alias="AUTH_LOGIN_URL",
-        description="Hub Google OAuth URL for unauthenticated browser redirect.",
-    )
-    logout_url: str = Field(
-        default="http://api:8080",
-        validation_alias="AUTH_LOGOUT_URL",
-        description=(
-            "LAN origin of Auth-Service HTTP for BFF logout (US-AUTHZ-06). "
-            "Do not call hub logout from the SPA (no CORS)."
-        ),
+    cache_ttl_seconds: int = Field(
+        default=60,
+        validation_alias="USER_SERVICE_CACHE_TTL_SECONDS",
+        description="TTL for cached GET role / GET user reads.",
     )
 
 
@@ -150,13 +107,6 @@ class BusinessLogicSettings(BaseSettings):
         return self.default_user_quota_mb * 1024 * 1024
 
 
-class AdminSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    email: str = Field(default="", validation_alias="ADMIN_EMAIL")
-    password: str = Field(default="", validation_alias="ADMIN_PASSWORD")
-
-
 class LoggingSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -167,6 +117,16 @@ class LoggingSettings(BaseSettings):
     file_retention: str = Field(default="30 days", validation_alias="LOG_FILE_RETENTION")
 
 
+class SpaSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    static_dir: str = Field(
+        default="/opt/spa",
+        validation_alias="SPA_STATIC_DIR",
+        description="Built Vite dist served by FastAPI when the directory exists.",
+    )
+
+
 class Settings:
     def __init__(self) -> None:
         self.database = DatabaseSettings()
@@ -174,10 +134,10 @@ class Settings:
         self.storage = StorageSettings()
         self.s3 = S3Settings()
         self.auth = AuthSettings()
-        self.auth_grpc = AuthGrpcSettings()
+        self.user_service = UserServiceSettings()
         self.business_logic = BusinessLogicSettings()
-        self.admin = AdminSettings()
         self.logging = LoggingSettings()
+        self.spa = SpaSettings()
 
 
 @lru_cache

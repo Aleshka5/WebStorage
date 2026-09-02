@@ -1,12 +1,6 @@
-"""Disk volume selection and health probes.
+"""Single-bucket volume selection and health probes.
 
-FS backend (``STORAGE_BACKEND=fs``)
-----------------------------------
-Free/total space comes from ``statvfs`` / ``df`` on ``STORAGE_ROOT/{disk_id}``.
-
-S3 backend (``STORAGE_BACKEND=s3``)
-----------------------------------
-Each ``STORAGE_DISKS`` entry maps to bucket ``{S3_BUCKET_PREFIX}{disk_id}``.
+One logical volume maps to MinIO bucket ``S3_BUCKET`` (default ``storage``).
 Availability is probed with ``HeadBucket``. Used bytes are the sum of object
 ``Size`` values in that bucket. Total capacity prefers MinIO Admin API
 (``GET /minio/admin/v3/info`` drive totals); when that is unavailable, a
@@ -17,12 +11,10 @@ drives ``HEALTHY`` / ``LOW_SPACE`` against ``MIN_FREE_SPACE_MB``.
 from __future__ import annotations
 
 import json
-import os
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import boto3
@@ -43,6 +35,7 @@ DISK_STATUS_UNAVAILABLE = "UNAVAILABLE"
 
 # Used when MinIO Admin capacity is unreachable (no secrets; operator-facing approximation).
 _S3_FALLBACK_TOTAL_BYTES = 1 << 40  # 1 TiB
+STORAGE_VOLUME_ID = "storage"
 
 
 class DiskRouter:
@@ -60,24 +53,16 @@ class DiskRouter:
         self._disks = self._build_disk_volumes()
 
     def _build_disk_volumes(self) -> list[DiskVolume]:
-        storage = self._settings.storage
-        root = Path(storage.root)
-        disk_ids = [disk_id.strip() for disk_id in storage.disks.split(",") if disk_id.strip()]
+        bucket = self._settings.s3.bucket
         disks = [
             DiskVolume(
-                id=disk_id,
-                mount_path=root / disk_id,
-                priority=index,
+                id=STORAGE_VOLUME_ID,
+                bucket=bucket,
+                priority=0,
                 is_active=True,
             )
-            for index, disk_id in enumerate(disk_ids)
         ]
-        logger.info(
-            "DiskRouter initialized with {} disks at root {} (backend={})",
-            len(disks),
-            storage.root,
-            storage.backend,
-        )
+        logger.info("DiskRouter initialized with single S3 bucket {}", bucket)
         return disks
 
     def get_all_disks(self) -> list[DiskVolume]:
@@ -156,16 +141,9 @@ class DiskRouter:
         if cached is not None and now - cached[1] < ttl:
             return cached[0]
 
-        if self._settings.storage.backend == "s3":
-            result = self._probe_s3_disk_space(disk)
-        else:
-            result = self._probe_fs_disk_space(disk)
-
+        result = self._probe_s3_disk_space(disk)
         self._space_cache[disk.id] = (result, now)
         return result
-
-    def _bucket_for_disk(self, disk_id: str) -> str:
-        return f"{self._settings.s3.bucket_prefix}{disk_id}"
 
     def _create_s3_client(self) -> Any:
         if self._s3_client_factory is not None:
@@ -184,7 +162,7 @@ class DiskRouter:
         )
 
     def _probe_s3_disk_space(self, disk: DiskVolume) -> dict[str, int] | None:
-        bucket = self._bucket_for_disk(disk.id)
+        bucket = disk.bucket
         try:
             client = self._create_s3_client()
             client.head_bucket(Bucket=bucket)
@@ -303,47 +281,3 @@ class DiskRouter:
             logger.warning("MinIO admin info response had no drive totalSpace fields")
             return None
         return total
-
-    def _probe_fs_disk_space(self, disk: DiskVolume) -> dict[str, int] | None:
-        mount_path = disk.mount_path
-        if not mount_path.exists():
-            return None
-        try:
-            stat = os.statvfs(mount_path)
-            block_size = stat.f_frsize
-            total_bytes = stat.f_blocks * block_size
-            free_bytes = stat.f_bavail * block_size
-            used_bytes = total_bytes - free_bytes
-            # FUSE/9p mounts may return zero sizes — fall back to `df`
-            if total_bytes == 0 and free_bytes == 0:
-                return self._probe_disk_space_via_df(mount_path)
-            return {
-                "total_bytes": total_bytes,
-                "used_bytes": used_bytes,
-                "free_bytes": free_bytes,
-            }
-        except OSError:
-            logger.warning("Failed to stat disk {} at {}", disk.id, mount_path)
-            return None
-
-    def _probe_disk_space_via_df(self, mount_path: Path) -> dict[str, int] | None:
-        """Fallback: use `df -B1` to get byte-accurate space from FUSE mounts."""
-        try:
-            result = os.popen(f"df -B1 {mount_path}").read().strip().splitlines()
-            if len(result) < 2:
-                return None
-            # Skip header, take last line (handles spaces in mount points)
-            parts = result[-1].split()
-            if len(parts) < 4:
-                return None
-            total = int(parts[1])
-            used = int(parts[2])
-            avail = int(parts[3])
-            return {
-                "total_bytes": total,
-                "used_bytes": used,
-                "free_bytes": avail,
-            }
-        except (OSError, ValueError, IndexError):
-            logger.warning("Failed to get disk space via df for {}", mount_path)
-            return None

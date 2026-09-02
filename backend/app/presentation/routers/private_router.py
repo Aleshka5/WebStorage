@@ -8,6 +8,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.file_service import FileService
+from app.application.keys_registry_service import KeyEntry, KeysRegistryService
 from app.application.private_service import PrivateService
 from app.domain.entities.file_record import FileRecord, FileSection
 from app.domain.entities.user import User
@@ -26,6 +27,7 @@ from app.presentation.dependencies.auth import get_current_user, get_quota_repos
 from app.presentation.routers.file_router import _ensure_upload_quota
 from app.presentation.dependencies.private import (
     _get_session_id,
+    get_keys_registry_service,
     get_private_file_service,
     get_private_service,
 )
@@ -36,6 +38,9 @@ from app.presentation.schemas.files import (
     RenameRequest,
 )
 from app.presentation.schemas.private import (
+    KeyItem,
+    KeysListResponse,
+    KeysPutRequest,
     PrivateQuotaResponse,
     PrivateSessionResponse,
     UnlockRequest,
@@ -229,6 +234,52 @@ async def get_private_session(
     session_id = _get_session_id(request)
     status_payload = await private_service.get_session_status(session_id)
     return PrivateSessionResponse(**status_payload)
+
+
+def _keys_list_response(entries: list[KeyEntry]) -> KeysListResponse:
+    return KeysListResponse(
+        keys=[KeyItem(name=entry.name, value=entry.value) for entry in entries],
+    )
+
+
+@router.get("/keys", response_model=KeysListResponse)
+async def get_keys_registry(
+    current_user: User = Depends(get_current_user),
+    keys_service: KeysRegistryService = Depends(get_keys_registry_service),
+    session: AsyncSession = Depends(get_async_session),
+) -> KeysListResponse:
+    logger.info("Keys registry GET for user {}", current_user.id)
+    try:
+        entries = await keys_service.list_keys(current_user.id)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+    logger.info("Keys registry returned {} keys for user {}", len(entries), current_user.id)
+    return _keys_list_response(entries)
+
+
+@router.put("/keys", response_model=KeysListResponse)
+async def put_keys_registry(
+    body: KeysPutRequest,
+    current_user: User = Depends(get_current_user),
+    keys_service: KeysRegistryService = Depends(get_keys_registry_service),
+    session: AsyncSession = Depends(get_async_session),
+) -> KeysListResponse:
+    logger.info("Keys registry PUT for user {} ({} keys)", current_user.id, len(body.keys))
+    try:
+        entries = await keys_service.save_keys(
+            current_user.id,
+            [KeyEntry(name=item.name, value=item.value) for item in body.keys],
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+    logger.info("Keys registry saved {} keys for user {}", len(entries), current_user.id)
+    return _keys_list_response(entries)
 
 
 @router.get("", response_model=list[FileNodeResponse])

@@ -9,77 +9,70 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.application.admin_service import AdminService
+from app.application.ports.user_directory import DirectoryUser
 from app.domain.entities.auth_principal import AuthPrincipal
 from app.domain.entities.user import User
-from app.domain.exceptions import AuthUnavailableError, UserNotFoundError
+from app.domain.exceptions import UserNotFoundError, UserServiceUnavailableError
 from app.domain.value_objects.error_codes import ErrorCode
 from app.domain.value_objects.role import Role
 from app.infrastructure.database.repositories.user_repo import UserAdminRow
 from app.infrastructure.database.session import get_async_session
 from app.presentation.dependencies.admin import get_admin_service
-from app.presentation.dependencies.auth import get_auth_validator, get_user_repository
+from app.presentation.dependencies.auth import get_user_directory, get_user_repository
 from app.presentation.exception_handlers import register_exception_handlers
 from app.presentation.routers.admin_router import router as admin_router
 from config import get_settings
 
 ADMIN_USER_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 USER_B_ID = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-SESSION_ID = "opaque-session-id-not-for-logs"
-COOKIE_NAME = "auth_session"
-
-ADMIN_PRINCIPAL = AuthPrincipal(
-    id=ADMIN_USER_ID,
-    email="admin@example.test",
-    name="Admin User",
-    role=Role.ADMIN,
-)
-FAMILY_PRINCIPAL = AuthPrincipal(
-    id=UUID("11111111-1111-1111-1111-111111111111"),
-    email="family@example.test",
-    name="Family User",
-    role=Role.FAMILY,
-)
-USER_B_FAMILY = AuthPrincipal(
-    id=USER_B_ID,
-    email="user-b@example.test",
-    name="User B",
-    role=Role.FAMILY,
-)
-USER_B_STRANGER = AuthPrincipal(
-    id=USER_B_ID,
-    email="user-b@example.test",
-    name="User B",
-    role=Role.STRANGER,
-)
+FAMILY_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
-class FakeAuthValidator:
+def _directory_user(
+    user_id: UUID,
+    email: str,
+    role: Role,
+    username: str = "user",
+) -> DirectoryUser:
+    return DirectoryUser(id=user_id, email=email, username=username, storage_role=role)
+
+
+ADMIN_DIR = _directory_user(ADMIN_USER_ID, "admin@example.test", Role.ADMIN, "admin")
+FAMILY_DIR = _directory_user(FAMILY_USER_ID, "family@example.test", Role.FAMILY, "family")
+USER_B_FAMILY = _directory_user(USER_B_ID, "user-b@example.test", Role.FAMILY, "userb")
+USER_B_STRANGER = _directory_user(USER_B_ID, "user-b@example.test", Role.STRANGER, "userb")
+
+
+class FakeUserDirectory:
     def __init__(
         self,
         *,
-        principal: AuthPrincipal | None = None,
-        error: Exception | None = None,
-        listed: list[AuthPrincipal] | None = None,
-        list_users_error: Exception | None = None,
+        caller_role: Role = Role.ADMIN,
+        listed: list[DirectoryUser] | None = None,
+        list_error: Exception | None = None,
     ) -> None:
-        self.principal = principal
-        self.error = error
+        self.caller_role = caller_role
         self.listed = listed if listed is not None else []
-        self.list_users_error = list_users_error
-        self.validate_calls: list[tuple[str, str]] = []
-        self.list_users_calls: list[tuple[str, str]] = []
+        self.list_error = list_error
+        self.role_calls: list[UUID] = []
+        self.list_calls = 0
 
-    async def validate(self, session_id: str, caller_host: str) -> AuthPrincipal:
-        self.validate_calls.append((session_id, caller_host))
-        if self.error is not None:
-            raise self.error
-        assert self.principal is not None
-        return self.principal
+    async def get_storage_role(self, user_id: UUID) -> Role:
+        self.role_calls.append(user_id)
+        return self.caller_role
 
-    async def list_users(self, session_id: str, caller_host: str) -> list[AuthPrincipal]:
-        self.list_users_calls.append((session_id, caller_host))
-        if self.list_users_error is not None:
-            raise self.list_users_error
+    async def get_user(self, user_id: UUID) -> DirectoryUser:
+        return DirectoryUser(
+            id=user_id,
+            email="caller@example.test",
+            username="caller",
+            storage_role=self.caller_role,
+        )
+
+    async def list_users(self) -> list[DirectoryUser]:
+        self.list_calls += 1
+        if self.list_error is not None:
+            raise self.list_error
         return list(self.listed)
 
 
@@ -96,8 +89,6 @@ class FakeUserRepository:
         return User(
             id=principal.id,
             email=principal.email,
-            password_hash=None,
-            google_id=None,
             role=Role.STRANGER,
             is_active=True,
             created_at=datetime.now(UTC),
@@ -110,14 +101,22 @@ class FakeUserRepository:
 @pytest.fixture(autouse=True)
 def clear_settings_cache() -> None:
     get_settings.cache_clear()
-    get_auth_validator.cache_clear()
+    get_user_directory.cache_clear()
     yield
     get_settings.cache_clear()
-    get_auth_validator.cache_clear()
+    get_user_directory.cache_clear()
+
+
+def _identity(role: Role = Role.ADMIN, user_id: UUID = ADMIN_USER_ID) -> dict[str, str]:
+    return {
+        "X-User-Id": str(user_id),
+        "X-Storage-Role": role.value,
+        "X-Auth-Email": "admin@example.test",
+    }
 
 
 def _build_app(
-    validator: FakeAuthValidator,
+    directory: FakeUserDirectory,
     user_repo: FakeUserRepository | None = None,
     quota_repo: AsyncMock | None = None,
 ) -> FastAPI:
@@ -126,7 +125,7 @@ def _build_app(
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(admin_router)
-    app.dependency_overrides[get_auth_validator] = lambda: validator
+    app.dependency_overrides[get_user_directory] = lambda: directory
     app.dependency_overrides[get_user_repository] = lambda: repo
 
     async def fake_session():
@@ -147,18 +146,24 @@ def _error_code(response) -> str:
     return response.json()["detail"]["error_code"]
 
 
-def test_admin_list_users_uses_live_list_users_roles() -> None:
-    validator = FakeAuthValidator(
-        principal=ADMIN_PRINCIPAL,
-        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
-    )
+def test_admin_list_users_empty() -> None:
+    directory = FakeUserDirectory(listed=[])
+    client = TestClient(_build_app(directory))
+
+    response = client.get("/api/admin/users", headers=_identity())
+
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "total": 0}
+    assert directory.list_calls == 1
+
+
+def test_admin_list_users_joins_quota_and_storage_role() -> None:
+    directory = FakeUserDirectory(listed=[ADMIN_DIR, USER_B_FAMILY])
     user_repo = FakeUserRepository()
     user_repo.admin_rows[USER_B_ID] = UserAdminRow(
         user=User(
             id=USER_B_ID,
             email="stale-local@example.test",
-            password_hash=None,
-            google_id=None,
             role=Role.ADMIN,
             is_active=True,
             created_at=datetime.now(UTC),
@@ -167,9 +172,9 @@ def test_admin_list_users_uses_live_list_users_roles() -> None:
         limit_bytes=50 * 1024 * 1024,
         private_limit_bytes=2048,
     )
-    client = TestClient(_build_app(validator, user_repo=user_repo))
+    client = TestClient(_build_app(directory, user_repo=user_repo))
 
-    response = client.get("/api/admin/users", cookies={COOKIE_NAME: SESSION_ID})
+    response = client.get("/api/admin/users", headers=_identity())
 
     assert response.status_code == 200
     body = response.json()
@@ -181,167 +186,89 @@ def test_admin_list_users_uses_live_list_users_roles() -> None:
     assert by_id[str(USER_B_ID)]["limit_bytes"] == 50 * 1024 * 1024
     assert by_id[str(ADMIN_USER_ID)]["role"] == Role.ADMIN.value
     assert by_id[str(ADMIN_USER_ID)]["limit_bytes"] == 100 * 1024 * 1024
-    assert len(validator.list_users_calls) == 1
-    assert validator.list_users_calls == [
-        (SESSION_ID, get_settings().auth_grpc.caller_host),
-    ]
+    assert directory.list_calls == 1
 
 
-def test_admin_list_users_reloads_live_role_after_stub_change() -> None:
-    validator = FakeAuthValidator(
-        principal=ADMIN_PRINCIPAL,
-        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
-    )
-    client = TestClient(_build_app(validator))
+def test_admin_list_users_omitted_storage_service_is_stranger() -> None:
+    directory = FakeUserDirectory(listed=[ADMIN_DIR, USER_B_STRANGER])
+    client = TestClient(_build_app(directory))
 
-    first = client.get("/api/admin/users", cookies={COOKIE_NAME: SESSION_ID})
-    assert first.status_code == 200
-    first_by_id = {item["id"]: item for item in first.json()["items"]}
-    assert first_by_id[str(USER_B_ID)]["role"] == Role.FAMILY.value
+    response = client.get("/api/admin/users", headers=_identity())
 
-    validator.listed = [ADMIN_PRINCIPAL, USER_B_STRANGER]
-    second = client.get("/api/admin/users", cookies={COOKIE_NAME: SESSION_ID})
-
-    assert second.status_code == 200
-    second_by_id = {item["id"]: item for item in second.json()["items"]}
-    assert second_by_id[str(USER_B_ID)]["role"] == Role.STRANGER.value
-    assert len(validator.list_users_calls) == 2
+    assert response.status_code == 200
+    by_id = {item["id"]: item for item in response.json()["items"]}
+    assert by_id[str(USER_B_ID)]["role"] == Role.STRANGER.value
 
 
 def test_patch_user_role_is_gone() -> None:
-    validator = FakeAuthValidator(principal=ADMIN_PRINCIPAL, listed=[ADMIN_PRINCIPAL])
-    client = TestClient(_build_app(validator))
+    directory = FakeUserDirectory(listed=[ADMIN_DIR])
+    client = TestClient(_build_app(directory))
 
     response = client.patch(
         f"/api/admin/users/{USER_B_ID}/role",
         json={"role": "STRANGER"},
-        cookies={COOKIE_NAME: SESSION_ID},
+        headers=_identity(),
     )
 
     assert response.status_code == 410
     assert _error_code(response) == ErrorCode.ACCESS_DENIED
-    assert validator.list_users_calls == []
+    assert directory.list_calls == 0
 
 
-def test_admin_list_users_unavailable_is_auth_unavailable() -> None:
-    validator = FakeAuthValidator(
-        principal=ADMIN_PRINCIPAL,
-        list_users_error=AuthUnavailableError("auth down"),
-    )
-    client = TestClient(_build_app(validator))
+def test_admin_list_users_unavailable_is_user_service_unavailable() -> None:
+    directory = FakeUserDirectory(list_error=UserServiceUnavailableError("directory down"))
+    client = TestClient(_build_app(directory))
 
-    response = client.get("/api/admin/users", cookies={COOKIE_NAME: SESSION_ID})
+    response = client.get("/api/admin/users", headers=_identity())
 
     assert response.status_code == 503
-    assert _error_code(response) == ErrorCode.AUTH_UNAVAILABLE
-    assert len(validator.list_users_calls) == 1
+    assert _error_code(response) == ErrorCode.USER_SERVICE_UNAVAILABLE
+    assert directory.list_calls == 1
 
 
 def test_family_cannot_list_admin_users() -> None:
-    validator = FakeAuthValidator(
-        principal=FAMILY_PRINCIPAL,
-        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
-    )
-    client = TestClient(_build_app(validator))
+    directory = FakeUserDirectory(caller_role=Role.FAMILY, listed=[ADMIN_DIR, USER_B_FAMILY])
+    client = TestClient(_build_app(directory))
 
-    response = client.get("/api/admin/users", cookies={COOKIE_NAME: SESSION_ID})
+    response = client.get(
+        "/api/admin/users",
+        headers=_identity(role=Role.FAMILY, user_id=FAMILY_USER_ID),
+    )
 
     assert response.status_code == 403
     assert _error_code(response) == ErrorCode.ACCESS_DENIED
-    assert len(validator.validate_calls) == 1
-    assert validator.list_users_calls == []
+    assert directory.list_calls == 0
 
 
-def test_patch_quota_creates_local_projection_for_auth_user() -> None:
-    validator = FakeAuthValidator(
-        principal=ADMIN_PRINCIPAL,
-        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
-    )
+def test_patch_quota_creates_local_projection() -> None:
+    directory = FakeUserDirectory(listed=[ADMIN_DIR, USER_B_FAMILY])
     user_repo = FakeUserRepository()
     quota_repo = AsyncMock()
-    client = TestClient(_build_app(validator, user_repo=user_repo, quota_repo=quota_repo))
+    client = TestClient(_build_app(directory, user_repo=user_repo, quota_repo=quota_repo))
 
     response = client.patch(
         f"/api/admin/users/{USER_B_ID}/quota",
         json={"private_limit_gb": 10.0},
-        cookies={COOKIE_NAME: SESSION_ID},
+        headers=_identity(),
     )
 
     assert response.status_code == 204
     assert user_repo.principals[-1].id == USER_B_ID
     quota_repo.update_private_limit.assert_awaited_once_with(USER_B_ID, 10 * 1024 * 1024 * 1024)
     quota_repo.update_limit.assert_not_called()
-    assert validator.list_users_calls == [
-        (SESSION_ID, get_settings().auth_grpc.caller_host),
-    ]
+    assert directory.list_calls == 1
 
 
-def test_patch_quota_limit_mb_only() -> None:
-    validator = FakeAuthValidator(
-        principal=ADMIN_PRINCIPAL,
-        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
-    )
+def test_patch_quota_unknown_directory_user_is_not_found() -> None:
+    directory = FakeUserDirectory(listed=[ADMIN_DIR])
     user_repo = FakeUserRepository()
     quota_repo = AsyncMock()
-    client = TestClient(_build_app(validator, user_repo=user_repo, quota_repo=quota_repo))
-
-    response = client.patch(
-        f"/api/admin/users/{USER_B_ID}/quota",
-        json={"limit_mb": 500},
-        cookies={COOKIE_NAME: SESSION_ID},
-    )
-
-    assert response.status_code == 204
-    quota_repo.update_limit.assert_awaited_once_with(USER_B_ID, 500 * 1024 * 1024)
-    quota_repo.update_private_limit.assert_not_called()
-
-
-def test_patch_quota_both_limits() -> None:
-    validator = FakeAuthValidator(
-        principal=ADMIN_PRINCIPAL,
-        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
-    )
-    user_repo = FakeUserRepository()
-    quota_repo = AsyncMock()
-    client = TestClient(_build_app(validator, user_repo=user_repo, quota_repo=quota_repo))
-
-    response = client.patch(
-        f"/api/admin/users/{USER_B_ID}/quota",
-        json={"limit_mb": 250, "private_limit_gb": 2.0},
-        cookies={COOKIE_NAME: SESSION_ID},
-    )
-
-    assert response.status_code == 204
-    quota_repo.update_limit.assert_awaited_once_with(USER_B_ID, 250 * 1024 * 1024)
-    quota_repo.update_private_limit.assert_awaited_once_with(USER_B_ID, 2 * 1024 * 1024 * 1024)
-
-
-def test_patch_quota_empty_body_is_unprocessable() -> None:
-    validator = FakeAuthValidator(
-        principal=ADMIN_PRINCIPAL,
-        listed=[ADMIN_PRINCIPAL, USER_B_FAMILY],
-    )
-    client = TestClient(_build_app(validator))
-
-    response = client.patch(
-        f"/api/admin/users/{USER_B_ID}/quota",
-        json={},
-        cookies={COOKIE_NAME: SESSION_ID},
-    )
-
-    assert response.status_code == 422
-
-
-def test_patch_quota_unknown_auth_user_is_not_found() -> None:
-    validator = FakeAuthValidator(principal=ADMIN_PRINCIPAL, listed=[ADMIN_PRINCIPAL])
-    user_repo = FakeUserRepository()
-    quota_repo = AsyncMock()
-    client = TestClient(_build_app(validator, user_repo=user_repo, quota_repo=quota_repo))
+    client = TestClient(_build_app(directory, user_repo=user_repo, quota_repo=quota_repo))
 
     response = client.patch(
         f"/api/admin/users/{USER_B_ID}/quota",
         json={"private_limit_gb": 10.0},
-        cookies={COOKIE_NAME: SESSION_ID},
+        headers=_identity(),
     )
 
     assert response.status_code == 404
@@ -350,25 +277,22 @@ def test_patch_quota_unknown_auth_user_is_not_found() -> None:
     quota_repo.update_private_limit.assert_not_called()
 
 
-def test_patch_quota_list_users_unavailable_is_auth_unavailable() -> None:
-    validator = FakeAuthValidator(
-        principal=ADMIN_PRINCIPAL,
-        list_users_error=AuthUnavailableError("auth down"),
-    )
-    client = TestClient(_build_app(validator))
+def test_patch_quota_list_unavailable_is_user_service_unavailable() -> None:
+    directory = FakeUserDirectory(list_error=UserServiceUnavailableError("directory down"))
+    client = TestClient(_build_app(directory))
 
     response = client.patch(
         f"/api/admin/users/{USER_B_ID}/quota",
         json={"private_limit_gb": 10.0},
-        cookies={COOKIE_NAME: SESSION_ID},
+        headers=_identity(),
     )
 
     assert response.status_code == 503
-    assert _error_code(response) == ErrorCode.AUTH_UNAVAILABLE
+    assert _error_code(response) == ErrorCode.USER_SERVICE_UNAVAILABLE
 
 
 @pytest.mark.asyncio
-async def test_update_user_quota_rejects_user_missing_from_list_users() -> None:
+async def test_update_user_quota_rejects_user_missing_from_directory() -> None:
     service = AdminService(
         user_repo=FakeUserRepository(),
         quota_repo=AsyncMock(),
@@ -381,6 +305,6 @@ async def test_update_user_quota_rejects_user_missing_from_list_users() -> None:
         await service.update_user_quota(
             ADMIN_USER_ID,
             USER_B_ID,
-            [ADMIN_PRINCIPAL],
+            [ADMIN_DIR],
             private_limit_gb=10.0,
         )

@@ -7,8 +7,6 @@ from typing import BinaryIO
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
-import aiofiles
-import aiofiles.os
 from loguru import logger
 
 from app.application.archived_file_reader import (
@@ -18,6 +16,7 @@ from app.application.archived_file_reader import (
 from app.application.archive_service import ARCHIVE_EXTENSION
 from app.domain.entities.file_record import FileRecord, FileSection, FileStatus
 from app.domain.exceptions import AccessDeniedError, FileNotFoundError, QuotaExceededError
+from app.domain.value_objects.storage_quota import StorageQuota
 from app.domain.value_objects.role import Role
 from app.infrastructure.archive_manager import ArchiveManager
 from app.infrastructure.database.repositories.file_repo import FileRepository
@@ -162,6 +161,136 @@ class FileService:
                 await self._adapter.delete(tmp_path)
             await self._file_repo.delete(record.id)
             raise
+
+    async def overwrite_file(
+        self,
+        user_id: UUID,
+        path: str,
+        filename: str,
+        data: AsyncIterator[bytes],
+        size: int,
+        section: FileSection,
+    ) -> FileRecord:
+        """Write a file at path/filename, updating the existing FileRecord if present.
+
+        Quota is charged as the size delta (not the full new size) when a record
+        already exists for this path. If the file was deleted from FileManager,
+        a new record is created via upload_file.
+        """
+        normalized_path = self._normalize_path(path)
+        final_storage_path = self._join_path(normalized_path, filename)
+        existing = await self._get_record_by_section_path(
+            user_id,
+            final_storage_path,
+            section,
+        )
+        if existing is None:
+            logger.info(
+                "No existing file record for {} — creating a new one for user {}",
+                final_storage_path,
+                user_id,
+            )
+            return await self.upload_file(
+                user_id,
+                path,
+                filename,
+                data,
+                size,
+                section,
+            )
+
+        old_size = existing.size_bytes
+        delta = size - old_size
+        if delta > 0:
+            await self._ensure_overwrite_quota(user_id, delta, section)
+
+        tmp_path = self._join_path(TMP_DIR, str(existing.id))
+        logger.info(
+            "Overwriting file {} for user {} (old_size={}, new_size={})",
+            existing.id,
+            user_id,
+            old_size,
+            size,
+        )
+        try:
+            checksum = await self._adapter.write(tmp_path, data, size)
+            if await self._adapter.exists(final_storage_path):
+                await self._adapter.delete(final_storage_path)
+            await self._adapter.rename(tmp_path, final_storage_path)
+            updated = await self._file_repo.update_size(
+                existing.id,
+                size,
+                checksum_sha256=checksum,
+            )
+            if updated is None:
+                raise FileNotFoundError(
+                    f"File record {existing.id} not found after overwrite",
+                )
+            if delta > 0:
+                await self._quota_repo.increment(user_id, delta, section)
+            elif delta < 0:
+                await self._quota_repo.decrement(user_id, -delta, section)
+            logger.info(
+                "Overwrite completed for user {} file {} (checksum={})",
+                user_id,
+                existing.id,
+                checksum,
+            )
+            return updated
+        except Exception:
+            logger.exception(
+                "Overwrite failed for user {} file {}, rolling back tmp",
+                user_id,
+                existing.id,
+            )
+            if await self._adapter.exists(tmp_path):
+                await self._adapter.delete(tmp_path)
+            raise
+
+    async def path_exists(self, path: str) -> bool:
+        return await self._adapter.exists(self._normalize_path(path))
+
+    async def _ensure_overwrite_quota(
+        self,
+        user_id: UUID,
+        extra_bytes: int,
+        section: FileSection,
+    ) -> None:
+        usage = await self._quota_repo.get_by_user_id(user_id)
+        total = StorageQuota(used_bytes=usage.total_bytes, limit_bytes=usage.limit_bytes)
+        if total.would_exceed(extra_bytes):
+            available = total.available_bytes()
+            logger.warning(
+                "Overwrite quota exceeded for user {}: used={}, limit={}, extra={}",
+                user_id,
+                usage.total_bytes,
+                usage.limit_bytes,
+                extra_bytes,
+            )
+            raise QuotaExceededError(
+                f"Overwrite size increase {extra_bytes} bytes exceeds available quota "
+                f"({available} bytes remaining)",
+                available_bytes=available,
+            )
+        if section == FileSection.PRIVATE:
+            private = StorageQuota(
+                used_bytes=usage.private_bytes,
+                limit_bytes=usage.private_limit_bytes,
+            )
+            if private.would_exceed(extra_bytes):
+                available = private.available_bytes()
+                logger.warning(
+                    "Overwrite private quota exceeded for user {}: used={}, limit={}, extra={}",
+                    user_id,
+                    usage.private_bytes,
+                    usage.private_limit_bytes,
+                    extra_bytes,
+                )
+                raise QuotaExceededError(
+                    f"Overwrite size increase {extra_bytes} bytes exceeds available private quota "
+                    f"({available} bytes remaining)",
+                    available_bytes=available,
+                )
 
     async def download_file(self, actor_id: UUID, file_id: UUID) -> AsyncIterator[bytes]:
         record = await self._get_downloadable_record(file_id, actor_id)

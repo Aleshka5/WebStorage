@@ -26,8 +26,8 @@ from app.infrastructure.disk_router import DiskRouter
 from app.infrastructure.storage.s3_adapter import build_disk_root_adapter
 from config import get_settings
 
-DISK_ID = "disk1"
-BUCKET_PREFIX = "hc-"
+DISK_ID = "storage"
+BUCKET = "storage"
 USER_ID = uuid4()
 
 
@@ -78,18 +78,15 @@ def moto_endpoint() -> str:
 @pytest.fixture
 async def s3_env(moto_endpoint: str, monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
-    monkeypatch.setenv("STORAGE_BACKEND", "s3")
     monkeypatch.setenv("S3_ENDPOINT_URL", moto_endpoint)
     monkeypatch.setenv("S3_ACCESS_KEY", "testing")
     monkeypatch.setenv("S3_SECRET_KEY", "testing")
     monkeypatch.setenv("S3_REGION", "us-east-1")
-    monkeypatch.setenv("S3_BUCKET_PREFIX", BUCKET_PREFIX)
+    monkeypatch.setenv("S3_BUCKET", BUCKET)
     monkeypatch.setenv("S3_PATH_STYLE", "true")
-    monkeypatch.setenv("STORAGE_DISKS", DISK_ID)
-    monkeypatch.setenv("STORAGE_ROOT", "/storage")
     get_settings.cache_clear()
 
-    bucket = f"{BUCKET_PREFIX}{DISK_ID}"
+    bucket = BUCKET
     session = aioboto3.Session()
     config = Config(s3={"addressing_style": "path"})
     async with session.client(

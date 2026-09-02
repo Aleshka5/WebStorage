@@ -32,7 +32,7 @@ export function Button({
       type={type}
       disabled={isDisabled}
       className={[
-        "inline-flex w-full items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium transition-colors",
+        "inline-flex w-auto items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900",
         "disabled:cursor-not-allowed",
         variantClasses[variant],

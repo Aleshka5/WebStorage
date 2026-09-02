@@ -53,6 +53,7 @@ Use in-memory / temp FS adapters and fake `SessionStore`.
 | `FileService` | Upload increments quota; delete decrements; shared ACL |
 | `PhotoService` | Reject non-image; create preview path |
 | `PrivateService` | Unlock stores key; lock removes; reset wipes |
+| `KeysRegistryService` | Bootstrap `Keys/keys.yaml`; PUT/GET round-trip; reject empty/duplicate; invalid YAML not overwritten; one FileRecord on overwrite |
 | `AdminService` | Self role/delete forbidden; block sets inactive |
 | `ArchiveService` | Only idle COMMITTED files archived |
 | `MaintenanceService` | PENDING &gt;1h removed |
@@ -66,6 +67,7 @@ Use in-memory / temp FS adapters and fake `SessionStore`.
 | Shared | STRANGER 403; FAMILY list/upload; delete ACL |
 | Photos | upload + list pagination `has_next` |
 | Private | ops without unlock → 401 `PRIVATE_SESSION_EXPIRED`; unlock then download |
+| Keys Registry | GET without unlock → 401 `PRIVATE_SESSION_EXPIRED`; GET creates `Keys/` + empty `keys.yaml`; PUT/GET round-trip; empty/duplicate → 400; invalid YAML → 409 and file unchanged; second GET does not wipe; overwrite does not add a second FileRecord |
 | Quota | `/api/quota/me` shape |
 | Admin | non-admin 403; **after E-AUTHZ:** `GET /api/admin/users` includes live `role` text; `PATCH .../role` gone; quota/storage still ADMIN-only |
 
@@ -77,22 +79,22 @@ Assert **error_code** strings, not only HTTP status.
 - Cleanup removes stale PENDING.
 - Reconcile corrects artificial drift.
 
-### 3.5 Auth-Service gRPC (epic E-AUTHZ)
+### 3.5 Gateway headers + User-Service (epic E-GWUS)
 
-Related: [auth-service-roles](./epics/auth-service-roles/init.md). Use a **fake `AuthValidator`** in CI; optional live gRPC marked `integration`.
+Related: [gateway-user-service](./epics/gateway-user-service/init.md). Fake `UserDirectory` in CI.
 
 | Case | Expectation |
 |---|---|
-| Two authenticated requests, same cookie | **Two** `Validate` RPCs (no caller cache) |
-| Missing `auth_session` | 401 `UNAUTHORIZED`; zero RPCs |
-| Expired / unknown Redis session (`Unauthenticated`) | 401 `UNAUTHORIZED`; FE → `AUTH_LOGIN_URL`, not private-unlock UI |
-| gRPC `PermissionDenied` / blocked | 403 `ACCESS_DENIED` (not login redirect) |
-| gRPC `Unavailable` / deadline | 503 `AUTH_UNAVAILABLE` (FE must **not** OAuth-redirect) |
-| `storage_roles=STRANGER` | `/api/shared` and `/api/admin` → 403; `/api/files` → 200 |
-| `storage_roles=FAMILY` | shared 200; admin 403 |
-| `storage_roles=ADMIN` | shared + admin 200 |
-| Invalid / missing `storage_roles` in fields | 500 `INTERNAL_ERROR` (misconfig), not silent STRANGER |
-| Domain/Application | No `grpcio` imports |
+| `X-User-Id` + `X-Storage-Role=FAMILY` | 200 on `/api/files`; zero User-Service calls |
+| `X-User-Id` only | GET `…/roles/storage`; cache hit on the next client call |
+| Only `X-Auth-Role=ADMIN`, User-Service down | 503 `USER_SERVICE_UNAVAILABLE`; not ADMIN |
+| Invalid `X-Storage-Role` | 500; not STRANGER |
+| No user-id headers | 401; no User-Service call |
+| `X-Storage-Role=STRANGER` on `/api/shared` | 403 |
+| `X-Storage-Role=ADMIN` on `/api/admin/*` | 200 |
+| `X-Storage-Role=BLOCKED` | 403 `ACCESS_DENIED` |
+| Vault cookie missing | 401 `UNAUTHORIZED` (not `PRIVATE_SESSION_EXPIRED`) |
+| Vault Redis key missing | 401 `PRIVATE_SESSION_EXPIRED` |
 
 ---
 
@@ -123,6 +125,7 @@ Mock API modules; do not hit real backend in unit/component tests.
 1. Admin login → `/files` upload → download → delete.
 2. Photo upload → appears in grid → lightbox.
 3. Private unlock → upload → lock/expiry → unlock again.
+3a. Keys Registry unlock → add key → save → reload list; delete in UI → save.
 4. STRANGER cannot open `/shared` or `/admin`.
 5. FAMILY opens `/shared`.
 6. Admin changes **Auth-Service `storage_roles`** (not HomeCloud `PATCH .../role`); storage UI reflects on next load.
@@ -134,7 +137,7 @@ Mock API modules; do not hit real backend in unit/component tests.
 | Concern | Check |
 |---|---|
 | Streaming | Download &gt; small buffer without full memory load (integration) |
-| Logging | No passphrase/password in captured logs during private unlock test |
+| Logging | No passphrase/password in captured logs during private unlock test; no key **values** in Keys Registry logs |
 | Config | Settings load from env; forbidden direct `os.getenv` in app code (lint/grep in CI) |
 | Migrations | Fresh DB + `alembic upgrade head` succeeds |
 
@@ -143,7 +146,7 @@ Mock API modules; do not hit real backend in unit/component tests.
 ## 6. Fixtures & Test Data
 
 - Deterministic ADMIN via settings or factory.
-- Temp `STORAGE_ROOT` per test session.
+- Moto / MinIO-backed S3 adapters per test (no local blob FS).
 - Redis DB index isolated or flushed between tests.
 - Sample images: tiny JPEG/PNG fixtures; one invalid `.txt` for format rejection.
 
@@ -162,4 +165,4 @@ For a new epic/story:
 
 ## 8. Current Baseline
 
-As of docs creation: **no formal automated suite is mandated by TZ**; verify scripts under `backend/scripts/` (e.g. private storage / encrypted adapter checks) are ad-hoc aids, not a replacement for this strategy. New SDD work should add tests alongside features rather than expanding verify scripts only.
+As of docs creation: automated backend suite lives under `backend/tests/` (`uv run pytest`). Ad-hoc verify scripts under `backend/scripts/` are not a replacement. New SDD work should add tests alongside features.

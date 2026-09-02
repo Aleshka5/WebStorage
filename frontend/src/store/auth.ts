@@ -1,6 +1,6 @@
 import { isAxiosError } from "axios";
 import { create } from "zustand";
-import api from "../services/api";
+import api, { getApiErrorDetail } from "../services/api";
 
 export interface User {
   user_id: string;
@@ -11,37 +11,39 @@ export interface User {
 interface AuthState {
   user: User | null;
   isLoading: boolean;
-  authUnavailable: boolean;
-  logout: () => Promise<void>;
+  userServiceUnavailable: boolean;
+  unauthorized: boolean;
   fetchMe: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   isLoading: false,
-  authUnavailable: false,
-
-  logout: async () => {
-    set({ isLoading: true });
-
-    try {
-      await api.post("/api/auth/logout");
-    } finally {
-      set({ user: null, isLoading: false, authUnavailable: false });
-    }
-  },
+  userServiceUnavailable: false,
+  unauthorized: false,
 
   fetchMe: async () => {
     try {
       const { data } = await api.get<User>("/api/auth/me");
-      set({ user: data, authUnavailable: false });
+      set({
+        user: data,
+        userServiceUnavailable: false,
+        unauthorized: false,
+      });
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 401) {
-        set({ user: null, authUnavailable: false });
+        set({ user: null, userServiceUnavailable: false, unauthorized: true });
         return;
       }
 
-      set({ authUnavailable: true });
+      const code = getApiErrorDetail(error)?.error_code;
+      set({
+        user: null,
+        unauthorized: false,
+        userServiceUnavailable:
+          isAxiosError(error) &&
+          (error.response?.status === 503 || code === "USER_SERVICE_UNAVAILABLE"),
+      });
     }
   },
 }));

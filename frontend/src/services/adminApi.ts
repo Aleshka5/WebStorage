@@ -18,7 +18,7 @@ export interface UserListResponse {
 
 export interface DiskStat {
   id: string;
-  mount_path: string;
+  bucket: string;
   total_bytes: number;
   used_bytes: number;
   free_bytes: number;

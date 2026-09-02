@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 
 from app.domain.exceptions import PathTraversalError
 
@@ -54,24 +53,6 @@ class StorageAdapter(ABC):
                 )
             parts.append(part)
         return "/".join(parts)
-
-    @staticmethod
-    def _safe_path(base: Path, user_input: str) -> Path:
-        """Resolve ``user_input`` under an FS ``base`` using logical-key rules."""
-        logical = StorageAdapter._safe_logical_key(user_input)
-        base_resolved = base.resolve()
-        if not logical:
-            return base_resolved
-
-        candidate = (base_resolved / logical).resolve()
-        try:
-            candidate.relative_to(base_resolved)
-        except ValueError as exc:
-            raise PathTraversalError(
-                f"Path {user_input!r} escapes allowed directory {base_resolved}"
-            ) from exc
-
-        return candidate
 
     @abstractmethod
     async def list(self, path: str) -> list[FileNode]:

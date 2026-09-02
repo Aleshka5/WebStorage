@@ -20,8 +20,8 @@
                                     └────────┬────────┘
                          ┌───────────────────┼───────────────────┐
                          ▼                   ▼                   ▼
-                   PostgreSQL              Redis            Filesystem
-                   (metadata)           (sessions)         (disk volumes)
+                   PostgreSQL              Redis              MinIO
+                   (metadata)           (sessions)         (S3 blobs)
 ```
 
 External: Google OAuth 2.0 (optional). Ops: APScheduler inside app process for backup/archive/maintenance.
@@ -46,7 +46,7 @@ backend/app/
 |---|---|
 | `User` | Identity, role, activity |
 | `FileRecord` | File metadata + lifecycle |
-| `DiskVolume` | Mounted disk descriptor |
+| `DiskVolume` | Logical disk → MinIO bucket |
 | `Role` | Access predicates (`can_access_shared`, `can_access_admin`) |
 | `FileSection` / `FileStatus` | Section & lifecycle enums |
 | `StorageQuota` | used/limit helpers |
@@ -61,6 +61,7 @@ backend/app/
 | `FileService` | List/upload/download/mkdir/rename/delete/ZIP for a section |
 | `PhotoService` | Photo upload, thumbnails, pagination, delete |
 | `PrivateService` | Unlock/lock/reset; builds encrypted `FileService` |
+| `KeysRegistryService` | Bootstrap/parse/save `Keys/keys.yaml` via unlocked private `FileService` |
 | `AdminService` | Users, roles, private quotas, block, delete, disk stats |
 | `ArchiveService` | Idle-file zstd archive + stats |
 | `BackupService` | `pg_dump` + zstd + retention |
@@ -70,9 +71,9 @@ backend/app/
 
 | Component | Notes |
 |---|---|
-| `PlainStorageAdapter` | FS ops; SHA-256; path traversal checks; hides `.tmp`/dotfiles |
-| `EncryptedStorageAdapter` | Decorator: AES-GCM content + encrypted names; PBKDF2 key |
-| `DiskRouter` | Pick write disk by free space; cache TTL |
+| `S3StorageAdapter` | MinIO object I/O; SHA-256; logical-key traversal checks; hides `.tmp`/dot prefixes |
+| `EncryptedStorageAdapter` | Decorator over `StorageAdapter`: AES-GCM content + encrypted names; PBKDF2 key |
+| `DiskRouter` | Pick write bucket by free space (MinIO capacity); cache TTL |
 | `ThumbnailService` | Pillow (+ HEIF); max edge `THUMBNAIL_MAX_PX` |
 | `ArchiveManager` | zstd L22; `pre_encrypt` / `post_encrypt` |
 | `SessionStore` (Redis) | Private keys, OAuth state/ticket, rate limits |
@@ -92,7 +93,7 @@ backend/app/
 
 ```
 frontend/src/
-├── pages/            # Auth, Photos, Files, Private, Shared, Admin
+├── pages/            # Auth, Photos, Files, Private, Keys Registry, Shared, Admin
 ├── components/
 │   ├── Layout/       # AppLayout, Header, Sidebar, StorageUsageBar
 │   ├── FileManager/  # Reusable manager (plain | encrypted)
@@ -128,11 +129,13 @@ Auth: `withCredentials: true`; JWT never stored in localStorage. Private expiry:
 | `delete(path)` | Remove file/dir |
 | `rename(...)` | Rename within section |
 
-Encrypted adapter encrypts/decrypts names and payloads around the plain adapter.
+Encrypted adapter encrypts/decrypts names and payloads around the inner `StorageAdapter` (`S3StorageAdapter`).
 
 ### 4.2 DiskRouter
 
-- Inputs: `STORAGE_ROOT`, `STORAGE_DISKS`, `MIN_FREE_SPACE_MB`, `DISK_SPACE_CACHE_TTL`.
+- Inputs: `STORAGE_DISKS`, `S3_*`, `MIN_FREE_SPACE_MB`, `DISK_SPACE_CACHE_TTL`.
+- Mapping: `disk_id` → bucket `{S3_BUCKET_PREFIX}{disk_id}`.
+- Capacity: HeadBucket + object size sum + MinIO Admin API (1 TiB total fallback).
 - Output: `disk_id` for new writes, or `StorageUnavailableError`.
 - Strategy env `DISK_STRATEGY` reserved; **implemented behavior = most free space**.
 
@@ -175,7 +178,7 @@ Encrypted adapter encrypts/decrypts names and payloads around the plain adapter.
 | Google OAuth 2.0 | Social login | State in Redis; ticket bridge to set cookie |
 | PostgreSQL | Metadata | Alembic migrations on startup |
 | Redis | Sessions / rate limits | Required for private unlock & OAuth |
-| Filesystem volumes | Blob storage | Multi-disk mount under `/storage` |
+| MinIO | Blob storage | Buckets 1:1 with `STORAGE_DISKS`; app does not mount blob disk |
 | Caddy / Ingress (optional) | TLS | Outside core compose |
 
 ---
@@ -188,7 +191,8 @@ Root: `Settings` via `get_settings()` (`@lru_cache`).
 |---|---|
 | `DatabaseSettings` | `DATABASE_URL` |
 | `CacheDBSettings` | `REDIS_URL` |
-| `StorageSettings` | `STORAGE_ROOT`, `STORAGE_DISKS`, `DISK_STRATEGY`, `DISK_SPACE_CACHE_TTL`, `MIN_FREE_SPACE_MB` |
+| `StorageSettings` | `STORAGE_DISKS`, `DISK_STRATEGY`, `DISK_SPACE_CACHE_TTL`, `MIN_FREE_SPACE_MB` |
+| `S3Settings` | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION`, `S3_USE_SSL`, `S3_BUCKET_PREFIX`, `S3_PATH_STYLE` |
 | `AuthSettings` | Google OAuth, `FRONTEND_URL`, `JWT_SECRET`, session TTLs |
 | `BusinessLogicSettings` | Photo batch, thumbnail size, stranger quota, archive days |
 | `AdminSettings` | `ADMIN_EMAIL`, `ADMIN_PASSWORD` (bootstrap) |
@@ -219,11 +223,11 @@ Health: `GET /`, `GET /health`. Admin: `GET /api/admin/storage/health`.
 
 ## 10. Deployment Topology
 
-**Docker Compose:** `app` (:8000), `frontend` (:80), `db`, `redis`; host mounts `./storage/diskN` → `/storage/diskN`.
+**Docker Compose:** `app` (:8000), `frontend` (:80), `db`, `redis`, `minio` (:9000/:9001), `minio-init` (bucket bootstrap). App does not mount a blob disk; MinIO owns `/data`.
 
-**Init:** `scripts/init_storage.py` (dirs), `scripts/init_db.py` (first ADMIN), Alembic upgrade on entrypoint.
+**Init:** `minio-init` (buckets), `scripts/init_db.py` (first ADMIN), Alembic upgrade on entrypoint.
 
-**K8s:** `deployment.yaml` + secrets via `generate-secret.sh`; PVC for storage.
+**K8s:** `deployment.yaml` + secrets via `generate-secret.sh`. Blobs are MinIO; do not mount `/storage` on the app pod.
 
 ---
 

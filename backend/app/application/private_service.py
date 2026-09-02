@@ -125,7 +125,7 @@ class PrivateService:
                 root_prefix,
             )
 
-        # Re-ensure section root after wipe (fs recreates directory; s3 mkdir("") is fine).
+        # Re-ensure the section prefix after wipe (S3 mkdir("") is a marker ensure).
         await build_section_adapter(disk_id, root_prefix, user_id=user_id)
 
         deleted_records = await self._file_repo.delete_all_by_user_section(

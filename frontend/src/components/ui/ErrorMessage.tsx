@@ -15,11 +15,16 @@ const ERROR_MESSAGES: Record<string, string> = {
   INTERNAL_ERROR: "Something went wrong. Try again later",
   UNSUPPORTED_FORMAT: "Unsupported file format",
   PATH_TRAVERSAL_DETECTED: "Invalid file path",
-  UNAUTHORIZED: "Authorization required",
-  AUTH_UNAVAILABLE: "Authorization service is temporarily unavailable. Try again later",
+  UNAUTHORIZED: "Open this site through the hub. Storage does not handle sign-in.",
+  USER_SERVICE_UNAVAILABLE: "User directory is temporarily unavailable. Try again later",
   INVALID_CREDENTIALS: "Invalid email or password",
   EMAIL_ALREADY_EXISTS: "A user with this email already exists",
   NOT_IMPLEMENTED: "This feature is not available yet",
+  KEY_NAME_EMPTY: "Key name cannot be empty",
+  KEY_VALUE_EMPTY: "Key value cannot be empty",
+  KEY_NAME_DUPLICATE: "A key with this name already exists",
+  KEYS_YAML_INVALID:
+    "keys.yaml is invalid. Fix or replace it in Private files before using Keys Registry",
 };
 
 function applyPlaceholders(template: string, options?: ErrorMessageOptions): string {

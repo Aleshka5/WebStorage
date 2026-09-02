@@ -8,12 +8,14 @@ from app.domain.exceptions import (
     AuthBlockedError,
     AuthMisconfiguredError,
     AuthUnauthenticatedError,
-    AuthUnavailableError,
     FileNotFoundError,
+    KeysValidationError,
+    KeysYamlInvalidError,
     PathTraversalError,
     PrivateSessionExpiredError,
     QuotaExceededError,
     StorageUnavailableError,
+    UserServiceUnavailableError,
 )
 from app.domain.value_objects.error_codes import ErrorCode
 
@@ -126,7 +128,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         _request: Request,
         exc: AuthUnauthenticatedError,
     ) -> JSONResponse:
-        logger.warning("Auth unauthenticated: {}", exc)
+        logger.warning("Unauthenticated: {}", exc)
         return _error_response(
             status.HTTP_401_UNAUTHORIZED,
             {
@@ -140,7 +142,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         _request: Request,
         exc: AuthBlockedError,
     ) -> JSONResponse:
-        logger.warning("Auth blocked: {}", exc)
+        logger.warning("Storage role blocked: {}", exc)
         return _error_response(
             status.HTTP_403_FORBIDDEN,
             {
@@ -154,7 +156,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         _request: Request,
         exc: AuthAccessDeniedError,
     ) -> JSONResponse:
-        logger.warning("Auth access denied: {}", exc)
+        logger.warning("Access denied: {}", exc)
         return _error_response(
             status.HTTP_403_FORBIDDEN,
             {
@@ -163,17 +165,45 @@ def register_exception_handlers(app: FastAPI) -> None:
             },
         )
 
-    @app.exception_handler(AuthUnavailableError)
-    async def auth_unavailable_handler(
+    @app.exception_handler(UserServiceUnavailableError)
+    async def user_service_unavailable_handler(
         _request: Request,
-        exc: AuthUnavailableError,
+        exc: UserServiceUnavailableError,
     ) -> JSONResponse:
-        logger.warning("Auth-Service unavailable: {}", exc)
+        logger.warning("User-Service unavailable: {}", exc)
         return _error_response(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             {
-                "error_code": ErrorCode.AUTH_UNAVAILABLE,
-                "message": str(exc) or "Authentication service unavailable",
+                "error_code": ErrorCode.USER_SERVICE_UNAVAILABLE,
+                "message": str(exc) or "User directory is unavailable",
+            },
+        )
+
+    @app.exception_handler(KeysValidationError)
+    async def keys_validation_handler(
+        _request: Request,
+        exc: KeysValidationError,
+    ) -> JSONResponse:
+        logger.warning("Keys registry validation failed: {}", exc)
+        return _error_response(
+            status.HTTP_400_BAD_REQUEST,
+            {
+                "error_code": exc.error_code,
+                "message": str(exc),
+            },
+        )
+
+    @app.exception_handler(KeysYamlInvalidError)
+    async def keys_yaml_invalid_handler(
+        _request: Request,
+        exc: KeysYamlInvalidError,
+    ) -> JSONResponse:
+        logger.warning("Keys registry YAML is invalid: {}", exc)
+        return _error_response(
+            status.HTTP_409_CONFLICT,
+            {
+                "error_code": ErrorCode.KEYS_YAML_INVALID,
+                "message": str(exc),
             },
         )
 
@@ -182,7 +212,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         _request: Request,
         exc: AuthMisconfiguredError,
     ) -> JSONResponse:
-        logger.error("Auth-Service response misconfigured: {}", exc)
+        logger.error("Identity header misconfigured: {}", exc)
         return _error_response(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             {

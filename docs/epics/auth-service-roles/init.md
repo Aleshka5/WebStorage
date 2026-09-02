@@ -1,7 +1,7 @@
 # Epic: Auth-Service Role Management via gRPC Validate
 
 > **ID:** E-AUTHZ  
-> **Status:** Planned  
+> **Status:** Superseded by [E-GWUS](../gateway-user-service/init.md) — gRPC is deprecated; do not implement this epic.  
 > **Repos:** WebStorage (this epic) + sibling **Auth-Service** (`/home/aleksey/projects/Auth-Service`)  
 > **Specs:** [Master Document §4](../../Master%20Document.md), [API Contract §3 / §9](../../API%20Contract.md), [Flow Spec §2 / §7](../../Flow%20Spec.md), [Test Spec](../../Test%20Spec.md), [ADR-001](../../adr/ADR-001-clean-architecture.md), [ADR-003](../../adr/ADR-003-jwt-httponly-cookie.md), [ADR-004](../../adr/ADR-004-private-key-redis-ttl.md), Auth-Service `proto/auth.proto` + README “gRPC Validate”  
 > **Supersedes:** local role source of truth (`users.role`); product session JWT in `access_token` (ADR-003) for HomeCloud HTTP APIs  

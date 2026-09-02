@@ -1,3 +1,6 @@
+from app.domain.value_objects.error_codes import ErrorCode
+
+
 class StorageUnavailableError(Exception):
     """Raised when no storage disk is available for write operations."""
 
@@ -51,20 +54,32 @@ class SelfUserDeletionError(Exception):
 
 
 class AuthUnauthenticatedError(Exception):
-    """Raised when Auth-Service rejects the session (unauthenticated / invalid argument)."""
+    """Raised when identity headers are missing or not a UUID."""
 
 
 class AuthBlockedError(Exception):
-    """Raised when Auth-Service reports the caller is blocked."""
+    """Raised when the storage role is BLOCKED."""
 
 
 class AuthAccessDeniedError(Exception):
-    """Raised when Auth-Service denies access (unknown host, not admin, etc.)."""
-
-
-class AuthUnavailableError(Exception):
-    """Raised when Auth-Service is unreachable or the gRPC deadline is exceeded."""
+    """Raised when the caller is denied a storage section."""
 
 
 class AuthMisconfiguredError(Exception):
-    """Raised when Auth-Service fields cannot be mapped (missing id / invalid role)."""
+    """Raised when an identity header cannot be mapped (invalid role string)."""
+
+
+class UserServiceUnavailableError(Exception):
+    """Raised when User-Service is unreachable, times out, or returns a failed lookup."""
+
+
+class KeysValidationError(Exception):
+    """Raised when a keys-registry payload fails name/value validation."""
+
+    def __init__(self, message: str, *, error_code: ErrorCode) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
+class KeysYamlInvalidError(Exception):
+    """Raised when keys.yaml is not valid YAML or not a flat string mapping."""

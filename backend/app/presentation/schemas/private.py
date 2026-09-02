@@ -17,3 +17,16 @@ class PrivateQuotaResponse(BaseModel):
 class PrivateSessionResponse(BaseModel):
     active: bool
     expires_in_seconds: int = Field(ge=0)
+
+
+class KeyItem(BaseModel):
+    name: str
+    value: str
+
+
+class KeysListResponse(BaseModel):
+    keys: list[KeyItem]
+
+
+class KeysPutRequest(BaseModel):
+    keys: list[KeyItem]

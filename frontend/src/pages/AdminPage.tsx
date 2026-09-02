@@ -67,7 +67,7 @@ function StorageDiskCard({ disk }: { disk: DiskStat }) {
       <div className="mb-3 flex items-start justify-between gap-2">
         <div>
           <h4 className="font-medium text-zinc-100">{disk.id}</h4>
-          <p className="mt-0.5 text-xs text-zinc-500">{disk.mount_path}</p>
+          <p className="mt-0.5 text-xs text-zinc-500">Bucket: {disk.bucket}</p>
         </div>
         <span className={`text-xs font-medium ${diskStatusClass(disk.status)}`}>
           {diskStatusLabel(disk.status)}

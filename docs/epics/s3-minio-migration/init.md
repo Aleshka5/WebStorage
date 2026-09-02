@@ -1,24 +1,24 @@
 # Epic: Move from PC File System to S3 MinIO
 
 > **ID:** E-S3MINIO  
-> **Status:** Partial  
+> **Status:** Implemented (capacity fallback / HTTP e2e gaps documented)  
 > **Specs:** [Design Spec §4](../../Design%20Spec.md), [ADR-001](../../adr/ADR-001-clean-architecture.md), [ADR-002](../../adr/ADR-002-storage-adapter-decorator.md), [ADR-005](../../adr/ADR-005-disk-router-most-free.md), [ADR-006](../../adr/ADR-006-metadata-db-blobs-fs.md), [ADR-007](../../adr/ADR-007-minio-blob-backend.md), TZ §4 / §9  
-> **Supersedes (partially):** ADR-006 blob placement; ADR-005 free-space probes when backend = MinIO
+> **Supersedes:** ADR-006 blob placement; ADR-005 FS `statvfs` probes
 
 ## Overview
 
-Replace local multi-disk filesystem blob storage (`{STORAGE_ROOT}/{disk_id}/…`) with **self-hosted MinIO** (S3-compatible object storage), while keeping PostgreSQL metadata, Clean Architecture ports, and the existing public HTTP/API contracts.
+Local multi-disk filesystem blob storage is **removed**. Blobs live in **self-hosted MinIO** (S3 API). PostgreSQL metadata, Clean Architecture ports, and public HTTP/API contracts remain. Admin `DiskStat.mount_path` is replaced by `bucket`.
 
-Application services (`FileService`, `PhotoService`, `PrivateService`, …) must continue to depend on `StorageAdapter` (and related ports), not on `Path` / `aiofiles` / `statvfs`.
+Application services (`FileService`, `PhotoService`, `PrivateService`, …) depend on `StorageAdapter`, not on `Path` / `aiofiles` / `statvfs`. There is no `STORAGE_BACKEND` switch.
 
 ## Goals
 
 - Persist all blob bytes (files, photos, private ciphertext, archives, optional DB dump objects) in MinIO.
 - Keep metadata, quotas, ACL, encryption, and API behavior unchanged for clients.
 - Preserve multi-volume expandability semantics via MinIO buckets/prefixes (or multiple MinIO volumes), without migrating historical object keys when capacity is added.
-- Make `EncryptedStorageAdapter` decorate **any** `StorageAdapter` (FS or S3), not only `PlainStorageAdapter`.
-- Introduce an explicit ADR that supersedes ADR-006’s “blobs on filesystem” decision for the MinIO deployment mode.
-- Support a controlled migration path from existing FS trees into MinIO.
+- Make `EncryptedStorageAdapter` decorate **any** `StorageAdapter` (inner is `S3StorageAdapter`).
+- Introduce an explicit ADR that supersedes ADR-006’s “blobs on filesystem” decision.
+- Cut over to S3-only (FS adapter, env switch, and FS→S3 migrator removed).
 
 ## Non-goals (this epic)
 
@@ -41,12 +41,12 @@ As an architect, I need an accepted ADR (e.g. ADR-007) that:
 
 ### US-S3-02 — Settings & env for MinIO
 As an operator, I configure MinIO via `get_settings()` only:
-- endpoint, access/secret keys, region, secure flag, default bucket(s), optional path-style;
-- backend selector (e.g. `STORAGE_BACKEND=fs|s3`) for transition;
-- mirror all new vars in `.env.example` / `env.example`.
+- endpoint, access/secret keys, region, secure flag, bucket prefix, path-style;
+- no backend selector — S3 is always used;
+- mirror all vars in `.env.example`.
 
 ### US-S3-03 — S3StorageAdapter implements StorageAdapter
-As a backend developer, I have `S3StorageAdapter` in Infrastructure that implements the same port as `PlainStorageAdapter`:
+As a backend developer, I have `S3StorageAdapter` in Infrastructure that implements `StorageAdapter`:
 - `list` / `read` / `write` (stream + SHA-256) / `delete` / `mkdir` / `rename` / `exists`;
 - path-traversal safety on logical keys;
 - hides `.tmp` / dot-prefix objects from listings;
@@ -67,7 +67,7 @@ As a maintainer, application and DI no longer mkdir local trees or pass `Path` i
 ### US-S3-06 — Capacity routing replaces DiskRouter FS probes
 As an operator adding capacity, write placement still picks a healthy volume with enough free space:
 - map `disk_id` → MinIO bucket (or dedicated prefix on a named volume);
-- free-space / health from MinIO / underlying volume metrics (not `statvfs` on `STORAGE_ROOT`);
+- free-space / health from MinIO metrics (not `statvfs`);
 - sticky placement: existing records keep their `disk_id`; no auto-rebalance;
 - admin `GET /api/admin/storage/health` still returns `HEALTHY | LOW_SPACE | UNAVAILABLE`.
 
@@ -75,17 +75,12 @@ As an operator adding capacity, write placement still picks a healthy volume wit
 As an operator, `docker-compose` (and docs) run MinIO + create buckets/policies needed by HomeCloud; README covers credentials, persistence volume for MinIO data, and expand-capacity steps.
 
 ### US-S3-08 — Migrate existing FS blobs to MinIO
-As an operator with data on PC disks, I run a documented one-shot (or resumable) migration:
-- walk `{STORAGE_ROOT}/{disk_id}/…`;
-- upload objects with stable keys matching `relative_path` / section layout;
-- verify checksums against `file_records.checksum_sha256` where present;
-- switch `STORAGE_BACKEND=s3` only after verification;
-- support dry-run and progress logging (loguru, no secrets).
+Historical one-shot tool (`migrate_fs_to_s3.py` / `fs_s3_migrator`) walked the old FS tree into MinIO. **Removed** after the S3-only cutover (no FS backend, no data back-compat).
 
 ### US-S3-09 — Archives, backups, maintenance on object storage
 As a platform owner:
 - zstd archives are stored as objects; transparent download still works;
-- DB dumps land in a dedicated bucket/prefix (replacing `{disk}/_meta/backups/`);
+- DB dumps land at `_meta/backups/` in the first disk bucket;
 - PENDING / orphan `.tmp` cleanup works against object keys;
 - quota reconcile unchanged (metadata-driven).
 
@@ -103,7 +98,7 @@ As a QA owner:
 | Principle / ADR | Verdict | Notes |
 |---|---|---|
 | ADR-001 Clean Architecture | **Compatible** | New adapter + MinIO client stay in Infrastructure; Application keeps ports. |
-| ADR-002 Decorator encryption | **Compatible if US-S3-04 done** | Decorator must wrap the ABC, not hard-depend on `PlainStorageAdapter` FS details. |
+| ADR-002 Decorator encryption | **Compatible if US-S3-04 done** | Decorator must wrap the ABC, not hard-depend on a FS adapter. |
 | Metadata in PostgreSQL | **Compatible** | ADR-006 half that remains: DB for listings/quotas/ACL. |
 | Sticky `disk_id` placement | **Compatible** | Map `disk_id` → bucket/volume; do not rebalance old keys. |
 | Streaming upload/download + SHA-256 | **Compatible** | S3 multipart / ranged get must preserve streaming semantics. |
@@ -117,22 +112,22 @@ As a QA owner:
 | ADR-006 | Blobs on local FS; S3 rejected as “heavier for home Docker” | Direct contradiction | New ADR: accept MinIO for this target; mark ADR-006 superseded for blob placement (or “FS mode retained as optional backend”). |
 | TZ §4 layout | Explicit `/storage/diskN/...` tree | Object keys ≠ directories | Keep **logical** key layout isomorphic to today’s relative paths; document physical MinIO layout in ADR. |
 | ADR-005 / DiskRouter | `statvfs` / `df` on mounts | No local mounts for blobs | Replace probes with MinIO/volume capacity API; keep strategy hook `DISK_STRATEGY` / most-free semantics. |
-| `StorageAdapter.base_path: Path` | Part of ABC | FS leak in port | Evolve port to backend-agnostic root (string prefix / URI); update Plain adapter accordingly. |
-| DI helpers | `Path.mkdir` in photos/shared/files deps | Assumes local FS | Create prefixes via adapter `mkdir` / ensure-prefix helper. |
-| Archive / Thumbnail / Backup | Direct `Path` I/O in places | Bypasses port | Route through adapter or extract `BlobStore` used by both FS and S3. |
-| FAMILY/ADMIN quota = “free disk” | **Resolved (v1.2):** per-user `limit_bytes` (default 100 MB), not MinIO/disk free space. DiskRouter probes remain for write routing / admin health only. |
-| Encrypted adapter | Imports / assumes plain FS tmp patterns | Risk of FS-only private path | US-S3-04; keep crypto framing identical. |
-| E-STORAGE epic | Init layout via `init_storage.py` on disks | FS-centric ops story | Either extend init to ensure buckets or add MinIO bootstrap job; link epics. |
+| `StorageAdapter.base_path: Path` | Part of ABC | FS leak in port | Port is logical keys; `S3StorageAdapter` has no `base_path`. |
+| DI helpers | `Path.mkdir` in photos/shared/files deps | Assumes local FS | Prefixes via adapter `mkdir`. |
+| Archive / Thumbnail / Backup | Direct `Path` I/O in places | Bypasses port | Staging in `/tmp`; persist via adapter. |
+| FAMILY/ADMIN quota = “free disk” | **Resolved (v1.2):** per-user `limit_bytes` (default 100 MB), not MinIO free space. DiskRouter probes remain for write routing / admin health only. |
+| Encrypted adapter | Imports / assumes plain FS tmp patterns | Risk of FS-only private path | US-S3-04; crypto framing identical. |
+| E-STORAGE epic | Init layout via `init_storage.py` on disks | FS-centric ops story | Replaced by `minio-init` bucket bootstrap. |
 
 ### Layering checklist (DoD gate)
 
 - [x] Domain has no MinIO/boto/aiobotocore imports.
 - [x] Application services do not import `pathlib.Path` for blob I/O (logical `PurePosixPath` for key joins only is OK).
 - [x] Only Infrastructure talks to MinIO SDK.
-- [x] `EncryptedStorageAdapter` composes `StorageAdapter`, not `PlainStorageAdapter` concrete type (except tests).
+- [x] `EncryptedStorageAdapter` composes `StorageAdapter`, not a concrete FS type.
 - [x] ADR-007 (or successor) accepted before marking epic Implemented.
 - [x] `.env.example` lists every new setting.
-- [x] Existing epic DoDs (files/photos/private/shared/archive) still hold on `STORAGE_BACKEND=s3` (service/adapter regression under moto; see known gaps).
+- [x] Existing epic DoDs (files/photos/private/shared/archive) hold on S3 (service/adapter regression under moto).
 
 ### Parallelization matrix
 
@@ -179,15 +174,15 @@ Wave 1 (parallel)     Wave 2 (serial)     Wave 3 (limited parallel)     Wave 4  
 
 - [x] ADR for MinIO blob backend accepted; ADR-006/005 impact documented ([ADR-007](../../adr/ADR-007-minio-blob-backend.md)).
 - [x] `S3StorageAdapter` + settings + compose MinIO service.
-- [x] Files / Photos / Private / Shared / Archive / Backup work with `STORAGE_BACKEND=s3` (adapter + service-level coverage; Shared via same `FileService` + section adapter path).
+- [x] Files / Photos / Private / Shared / Archive / Backup work on S3 (adapter + service-level coverage; Shared via same `FileService` + section adapter path).
 - [x] Admin storage health reflects MinIO capacity (`HEALTHY` / `LOW_SPACE` / `UNAVAILABLE` via DiskRouter; see known gaps for capacity probe).
-- [x] FS→MinIO migration tool documented and checksum-verified (`backend/scripts/migrate_fs_to_s3.py` + tests).
+- [x] S3-only cutover: FS adapter, `STORAGE_BACKEND` / `STORAGE_ROOT`, `init_storage.py`, and FS→MinIO migrator removed.
 - [x] Automated adapter + regression round-trip tests in CI (`test_s3_*`, `test_us_s3_*`, especially US-S3-10).
 - [x] Logging covers upload/delete/migrate with `user_id` / `file_id` / `disk_id` / object key (no credentials).
 - [x] Epics index status updated when complete.
 
-## Known gaps (honest Partial)
+## Known gaps
 
 - **DiskRouter capacity:** when MinIO Admin API is unreachable, free-space math uses a documented **1 TiB** total fallback (`free ≈ total − used`). Real multi-volume drive totals from Admin API are preferred when available.
-- **No full HTTP ASGI e2e** in US-S3-10: coverage is moto-backed unit/integration at adapter + application service level (no `httpx`/`AsyncClient` against `/api/files|photos|private|shared|admin`). Public HTTP contracts were not changed.
-- **Shared section** is not a dedicated US-S3-10 scenario; it reuses `FileService` + DI section adapters already covered by US-S3-05/US-S3-10 files path.
+- **No full HTTP ASGI e2e** in US-S3-10: coverage is moto-backed unit/integration at adapter + application service level.
+- **Shared section** is not a dedicated US-S3-10 scenario; it reuses `FileService` + DI section adapters.

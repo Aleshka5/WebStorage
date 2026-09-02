@@ -1,3 +1,3 @@
-from app.application.ports.auth_validator import AuthValidator
+from app.application.ports.user_directory import DirectoryUser, UserDirectory
 
-__all__ = ["AuthValidator"]
+__all__ = ["DirectoryUser", "UserDirectory"]

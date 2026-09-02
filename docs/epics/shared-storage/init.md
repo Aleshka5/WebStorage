@@ -6,7 +6,7 @@
 
 ## Overview
 
-Common filesystem space for FAMILY and ADMIN using plain `FileManager` on `/api/shared`.
+Common shared space for FAMILY and ADMIN using plain `FileManager` on `/api/shared`.
 
 ## Goals
 

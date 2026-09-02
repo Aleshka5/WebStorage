@@ -178,23 +178,6 @@ class ArchiveService:
 
         return total
 
-    def resolve_archive_path(self, record: FileRecord) -> Path:
-        """FS absolute path for an archive (fs backend only)."""
-        if not record.archive_path:
-            raise FileNotFoundError(f"Archive path is missing for file {record.id}")
-        return self._resolve_disk_path(record.disk_id, record.archive_path)
-
-    def resolve_disk_path(self, disk_id: str, relative_path: str) -> Path:
-        return self._resolve_disk_path(disk_id, relative_path)
-
-    def temp_decompress_path(self, record: FileRecord) -> Path:
-        disk = self._disk_router.get_disk_by_id(record.disk_id)
-        return disk.mount_path / ".archive_tmp" / str(record.id) / "decompressed"
-
-    def _resolve_disk_path(self, disk_id: str, relative_path: str) -> Path:
-        disk = self._disk_router.get_disk_by_id(disk_id)
-        return disk.mount_path / relative_path
-
     @staticmethod
     async def _download_to_path(
         adapter: StorageAdapter,

@@ -1,3 +1,13 @@
+FROM node:20-alpine AS frontend
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -19,9 +29,12 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY backend/ ./
 
+COPY --from=frontend /frontend/dist /opt/spa
+
 COPY backend/scripts/entrypoint.py /entrypoint.py
 
 ENV PATH="/opt/venv/bin:$PATH"
+ENV SPA_STATIC_DIR=/opt/spa
 
 ENTRYPOINT ["/opt/venv/bin/python", "/entrypoint.py"]
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

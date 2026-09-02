@@ -25,9 +25,9 @@ Households and small groups need a private place for photos and documents withou
 - **Private** section with AES-256-GCM encryption driven by a user passphrase (never stored in DB).
 - **Shared** folder for FAMILY and ADMIN.
 - **Admin** panel for roles, private quotas, blocking, and storage health.
-- Multi-disk filesystem with metadata in PostgreSQL and sessions in Redis.
+- MinIO object storage (S3 API) with metadata in PostgreSQL and sessions in Redis.
 
-Deploy model: Docker Compose (app + PostgreSQL + Redis + frontend); optional Kubernetes manifests in repo.
+Deploy model: Docker Compose (app + PostgreSQL + Redis + MinIO + frontend); optional Kubernetes manifests in repo.
 
 ---
 
@@ -46,7 +46,7 @@ Deploy model: Docker Compose (app + PostgreSQL + Redis + frontend); optional Kub
 1. Reliable self-hosted file & photo management over HTTPS-capable deploy.
 2. Clear role model with enforceable quotas.
 3. Encrypted private vault with session-scoped keys and short TTL.
-4. Extensible disk layout without migrating existing files.
+4. Extensible bucket layout without migrating existing objects.
 5. Clean Architecture codebase ready for Spec Driven iteration.
 
 ---
@@ -68,7 +68,7 @@ Deploy model: Docker Compose (app + PostgreSQL + Redis + frontend); optional Kub
 
 | Criterion | Signal |
 |---|---|
-| Usable home deploy | `docker compose up` + init scripts → login as ADMIN |
+| Usable home deploy | `docker compose up` + MinIO bucket init + login as ADMIN |
 | Role isolation | STRANGER cannot hit `/api/shared` or `/api/admin` |
 | Quota enforcement | Uploads fail with `QUOTA_EXCEEDED` when over limit |
 | Private safety | Wrong passphrase rejected; key absent after lock/TTL |
@@ -79,7 +79,7 @@ Deploy model: Docker Compose (app + PostgreSQL + Redis + frontend); optional Kub
 
 ## 7. Constraints
 
-- Python 3.12+, FastAPI, React+TS, PostgreSQL, Redis.
+- Python 3.12+, FastAPI, React+TS, PostgreSQL, Redis, MinIO.
 - Config only through `pydantic-settings` / `get_settings()`.
 - Package manager: **uv** (backend); frontend uses npm/pnpm tooling in `frontend/`.
 - Logging via loguru; structured JSON; no sensitive payloads in logs.

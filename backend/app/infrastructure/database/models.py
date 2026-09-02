@@ -21,12 +21,6 @@ from app.infrastructure.database.base import Base
 DEFAULT_USER_QUOTA_BYTES = 100 * 1024 * 1024
 
 
-class UserRole(str, enum.Enum):
-    STRANGER = "STRANGER"
-    FAMILY = "FAMILY"
-    ADMIN = "ADMIN"
-
-
 class FileSection(str, enum.Enum):
     PHOTOS = "PHOTOS"
     FILES = "FILES"
@@ -50,13 +44,6 @@ class User(Base):
         default=uuid.uuid4,
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    google_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
-    role: Mapped[UserRole] = mapped_column(
-        Enum(UserRole, name="user_role", native_enum=True),
-        nullable=False,
-        default=UserRole.STRANGER,
-    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

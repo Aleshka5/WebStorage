@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, Request, status
 from loguru import logger
 
 from app.application.file_service import FileService
+from app.application.keys_registry_service import KeysRegistryService
 from app.application.private_service import PrivateService
 from app.domain.entities.user import User
 from app.domain.value_objects.error_codes import ErrorCode
@@ -14,7 +15,7 @@ from config import get_settings
 
 
 def _get_session_id(request: Request) -> str:
-    cookie_name = get_settings().auth_grpc.cookie_name
+    cookie_name = get_settings().auth.cookie_name
     token = request.cookies.get(cookie_name)
     if not token:
         logger.warning("Private vault requested without session cookie")
@@ -48,3 +49,9 @@ async def get_private_file_service(
 ) -> FileService:
     session_id = _get_session_id(request)
     return await private_service.get_file_service(current_user.id, session_id)
+
+
+def get_keys_registry_service(
+    file_service: FileService = Depends(get_private_file_service),
+) -> KeysRegistryService:
+    return KeysRegistryService(file_service)

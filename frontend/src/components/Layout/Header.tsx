@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { UserCircle } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
-import { redirectToAuthLogin } from "../../utils/authLogin";
 
 export function Header() {
   const user = useAuthStore((state) => state.user);
-  const logout = useAuthStore((state) => state.logout);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -23,12 +21,6 @@ export function Header() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuOpen]);
-
-  const handleLogout = async () => {
-    setMenuOpen(false);
-    await logout();
-    redirectToAuthLogin();
-  };
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 sm:px-6">
@@ -48,14 +40,6 @@ export function Header() {
         {menuOpen && (
           <div className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-800 shadow-xl">
             <div className="px-4 py-3 text-sm text-zinc-300">{displayEmail}</div>
-            <div className="border-t border-zinc-700" />
-            <button
-              type="button"
-              onClick={() => void handleLogout()}
-              className="w-full px-4 py-2.5 text-left text-sm text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
-            >
-              Log out
-            </button>
           </div>
         )}
       </div>

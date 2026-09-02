@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from app.application.archive_service import ArchiveService
@@ -12,6 +15,7 @@ from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.database.session import async_session_factory
 from app.infrastructure.logging_setup import setup_logging
 from app.infrastructure.session_store import get_session_store
+from app.presentation.dependencies.auth import get_user_directory
 from app.presentation.dependencies.archive_providers import (
     get_archive_disk_router,
     get_archive_manager,
@@ -175,6 +179,11 @@ async def lifespan(app: FastAPI):
     yield
     scheduler.shutdown(wait=False)
     await get_session_store().close()
+    directory = get_user_directory()
+    close = getattr(directory, "aclose", None)
+    if close is not None:
+        await close()
+        get_user_directory.cache_clear()
 
 
 app = FastAPI(title="HomeCloud", version="1.0", lifespan=lifespan)
@@ -189,11 +198,40 @@ app.include_router(photo_router)
 app.include_router(private_router)
 
 
-@app.get("/")
-async def root() -> dict[str, str]:
-    return {"status": "ok", "version": "1.0"}
-
-
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _spa_index() -> Path | None:
+    spa_dir = Path(settings.spa.static_dir)
+    index = spa_dir / "index.html"
+    if index.is_file():
+        return index
+    return None
+
+
+_spa_index_path = _spa_index()
+if _spa_index_path is not None:
+    spa_dir = _spa_index_path.parent
+    assets_dir = spa_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="spa-assets")
+    logger.info("Serving built SPA from {} (HTML Cache-Control: no-cache)", spa_dir)
+
+    spa_index_headers = {"Cache-Control": "no-cache"}
+
+    @app.get("/")
+    async def spa_root() -> FileResponse:
+        return FileResponse(_spa_index_path, headers=spa_index_headers)
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str) -> FileResponse:
+        candidate = spa_dir / full_path
+        if candidate.is_file() and spa_dir in candidate.resolve().parents:
+            return FileResponse(candidate)
+        return FileResponse(_spa_index_path, headers=spa_index_headers)
+else:
+    @app.get("/")
+    async def root() -> dict[str, str]:
+        return {"status": "ok", "version": "1.0"}

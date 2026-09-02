@@ -40,6 +40,7 @@ frontend/
 │   │   ├── PhotosPage.tsx          ← сетка фото + lightbox
 │   │   ├── FilesPage.tsx           ← файловый менеджер (plain)
 │   │   ├── PrivatePage.tsx         ← приватный раздел (encrypted)
+│   │   ├── KeysRegistryPage.tsx    ← реестр ключей (тот же private vault)
 │   │   ├── SharedPage.tsx          ← общая папка (plain)
 │   │   └── AdminPage.tsx           ← админ-панель
 │   ├── hooks/
@@ -52,9 +53,10 @@ frontend/
 │   │   ├── filesApi.ts             ← CRUD файлов
 │   │   ├── photosApi.ts            ← операции с фото
 │   │   ├── privateApi.ts           ← unlock / lock / quota
+│   │   ├── keysApi.ts              ← GET/PUT /api/private/keys
 │   │   └── adminApi.ts             ← пользователи, диски, архивы
 │   ├── store/
-│   │   ├── auth.ts                 ← auth state (user, logout, fetchMe)
+│   │   ├── auth.ts                 ← auth state (user, fetchMe; no logout)
 │   │   └── quota.ts                ← quota state (used_bytes, limit_bytes)
 │   ├── types/
 │   │   ├── files.ts                ← FileNode, FileManagerMode, SortField
@@ -65,7 +67,7 @@ frontend/
 │       ├── photoUpload.ts          ← normalizePhotoFiles
 │       ├── id.ts                   ← generateId
 │       ├── toast.ts                ← showSuccessToast, showErrorToast, showUploadProgressToast
-│       └── authLogin.ts            ← VITE_AUTH_LOGIN_URL + однократный редирект на хаб
+│       └── (no authLogin — 401/503 show an error, no OAuth redirect)
 ├── index.html
 ├── package.json
 ├── vite.config.ts
@@ -90,6 +92,7 @@ frontend/
 | `/files` | FilesPage (`FileManager mode=plain`) | yes | all |
 | `/photos` | PhotosPage | yes | all |
 | `/private` | PrivatePage (`FileManager mode=encrypted`) | yes | all |
+| `/keys` | KeysRegistryPage (same private unlock as `/private`) | yes | all |
 | `/shared` | SharedPage (`FileManager mode=plain`) | yes | FAMILY, ADMIN |
 | `/admin` | AdminPage | yes | ADMIN |
 
@@ -221,6 +224,13 @@ getPrivateQuota() -> Promise<{private_bytes, private_limit_bytes}>
 resetPrivateStorage() -> Promise<void>
 ```
 
+### keysApi.ts
+
+```typescript
+listKeys() -> Promise<{ keys: { name: string; value: string }[] }>
+saveKeys(keys) -> Promise<{ keys: { name: string; value: string }[] }>
+```
+
 ### adminApi.ts
 
 ```typescript
@@ -229,7 +239,7 @@ updateUserRole(userId, role) -> Promise<void>
 updateUserQuota(userId, { limit_mb?, private_limit_gb? }) -> Promise<void>
 blockUser(userId) -> Promise<void>
 deleteUser(userId) -> Promise<void>
-getStorageStats() -> Promise<{disks: DiskStat[]}>
+getStorageStats() -> Promise<{disks: DiskStat[]}>  // DiskStat: id, bucket, total_bytes, used_bytes, free_bytes, status
 ```
 
 ---
@@ -265,6 +275,7 @@ CSS Grid/Flex: `h-screen`, `bg-zinc-950`. Outlet рендерит дочерни
 | Camera | Фото | /photos | all |
 | Folder | Файлы | /files | all |
 | Lock | Приватное | /private | all |
+| Key | Keys Registry | /keys | all |
 | Users | Общее | /shared | FAMILY, ADMIN |
 | Settings | Админка | /admin | ADMIN |
 
@@ -513,6 +524,17 @@ Flash message через location.state.message.
 - Если active -> `<FileManager apiPrefix="/api/private" mode="encrypted" />` + PrivateQuotaBar
 - PrivateQuotaBar: fetches /api/private/quota, показывает used/limit в GB
 
+#### KeysRegistryPage
+
+Файл: `src/pages/KeysRegistryPage.tsx`
+
+- Same unlock gate as PrivatePage (`usePrivateSession` + `PrivateUnlockModal`). Cancel → `/files`.
+- After unlock: `GET /api/private/keys` (backend bootstraps `Keys/keys.yaml`).
+- Rows: key name + masked value (`abcd...wxyz` or `••••` if length ≤ 8). Copy uses the full in-memory value.
+- Add (modal: name + value), delete (local until Save), explicit Save (`PUT`). Save disabled when pristine.
+- Empty state: “No keys yet”. No edit of existing name/value. No quota bar.
+- Reuses `homecloud:private-session-expired`.
+
 #### SharedPage
 
 Файл: `src/pages/SharedPage.tsx`
@@ -530,7 +552,7 @@ Flash message через location.state.message.
    - TotalQuotaInput (MB, blur save) and PrivateQuotaInput (GB, blur save)
    - Block/Delete buttons per row
    - Pagination controls
-2. **Хранилище**: StorageDiskCard grid (total/used/free + status + progress bar)
+2. **Хранилище**: StorageDiskCard grid (bucket + total/used/free + status + progress bar)
 
 ### Hooks
 

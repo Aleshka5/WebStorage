@@ -13,9 +13,9 @@ from app.domain.exceptions import FileNotFoundError, PathTraversalError
 from app.infrastructure.storage.s3_adapter import S3StorageAdapter
 from config import get_settings
 
-DISK_ID = "disk1"
+DISK_ID = "storage"
 ROOT_PREFIX = "users/11111111-1111-1111-1111-111111111111/files"
-BUCKET_PREFIX = "hc-"
+BUCKET = "storage"
 
 
 async def _chunks(data: bytes) -> AsyncIterator[bytes]:
@@ -41,16 +41,15 @@ async def s3_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> S3StorageAdapter:
     get_settings.cache_clear()
-    monkeypatch.setenv("STORAGE_BACKEND", "s3")
     monkeypatch.setenv("S3_ENDPOINT_URL", moto_endpoint)
     monkeypatch.setenv("S3_ACCESS_KEY", "testing")
     monkeypatch.setenv("S3_SECRET_KEY", "testing")
     monkeypatch.setenv("S3_REGION", "us-east-1")
-    monkeypatch.setenv("S3_BUCKET_PREFIX", BUCKET_PREFIX)
+    monkeypatch.setenv("S3_BUCKET", BUCKET)
     monkeypatch.setenv("S3_PATH_STYLE", "true")
     get_settings.cache_clear()
 
-    bucket = f"{BUCKET_PREFIX}{DISK_ID}"
+    bucket = BUCKET
     session = aioboto3.Session()
     config = Config(s3={"addressing_style": "path"})
     async with session.client(
@@ -198,5 +197,5 @@ async def test_root_prefix_and_bucket_mapping(s3_adapter: S3StorageAdapter) -> N
     assert s3_adapter.root_prefix == ROOT_PREFIX
     assert s3_adapter.disk_relative_prefix == ROOT_PREFIX
     assert s3_adapter.disk_id == DISK_ID
-    assert s3_adapter.bucket == f"{BUCKET_PREFIX}{DISK_ID}"
+    assert s3_adapter.bucket == BUCKET
     assert s3_adapter.to_disk_relative_path("a/b.txt") == f"{ROOT_PREFIX}/a/b.txt"

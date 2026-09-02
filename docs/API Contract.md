@@ -2,7 +2,7 @@
 
 > **Status:** Active  
 > **Base URL:** `/api` (SPA proxies to backend)  
-> **Auth:** Cookie `access_token` (JWT, HttpOnly) unless noted. **Planned (E-AUTHZ):** cookie `auth_session`; per-request gRPC Validate; see [auth-service-roles](./epics/auth-service-roles/init.md).  
+> **Auth:** Gateway identity headers (`X-User-Id` / `X-Auth-User-Id`, `X-Storage-Role`). Cookie `auth_session` is vault-only. See [E-GWUS](./epics/gateway-user-service/init.md).  
 > **Error shape:** `{ "detail": { "error_code": "<CODE>", "message": "<text>", ... } }`  
 > **SSE:** None (downloads use `StreamingResponse` only)
 
@@ -32,9 +32,11 @@ Related: [Data Models.md](./Data%20Models.md), [Design Spec.md](./Design%20Spec.
 | `EMAIL_ALREADY_EXISTS` | 409 |
 | `QUOTA_EXCEEDED` | 413 (+ optional `available_bytes`) |
 | `UNSUPPORTED_FORMAT` / `PATH_TRAVERSAL_DETECTED` | 400 |
+| `KEY_NAME_EMPTY` / `KEY_VALUE_EMPTY` / `KEY_NAME_DUPLICATE` | 400 |
+| `KEYS_YAML_INVALID` | 409 (existing `keys.yaml` is not a flat string map; GET does not overwrite) |
 | `TOO_MANY_ATTEMPTS` | 429 (+ optional `retry_after`) |
 | `DISK_UNAVAILABLE` | 503 |
-| `AUTH_UNAVAILABLE` | 503 (Auth-Service gRPC down/timeout; **E-AUTHZ**) |
+| `USER_SERVICE_UNAVAILABLE` | 503 (User-Service down/timeout/failed role lookup; **E-GWUS**) |
 | `INTERNAL_ERROR` | 500 |
 | `NOT_IMPLEMENTED` | 501 |
 
@@ -51,43 +53,31 @@ Related: [Data Models.md](./Data%20Models.md), [Design Spec.md](./Design%20Spec.
 
 ## 3. Auth — `/api/auth`
 
-### `POST /api/auth/register`
+Identity is resolved from gateway headers. WebStorage does not issue JWTs, run OAuth, or log the user out.
 
-- Auth: public; rate limit ~5 / 60s
-- Body: `{ "email": string, "password": string }`
-- `201` `UserResponse`: `{ user_id, email, role }`
-- Errors: `409 EMAIL_ALREADY_EXISTS`, `429 TOO_MANY_ATTEMPTS`
+| Header | Use |
+|---|---|
+| `X-User-Id` | Preferred user UUID |
+| `X-Auth-User-Id` | Fallback user UUID |
+| `X-Storage-Role` | Storage role if a valid enum (`ADMIN` \| `FAMILY` \| `STRANGER` \| `BLOCKED`) |
+| `X-Auth-Email` | Email for local upsert |
+| `X-Auth-Role` | **Ignored** (hub `global_role`) |
 
-### `POST /api/auth/login`
+Missing / invalid user id → `401 UNAUTHORIZED`. Invalid `X-Storage-Role` → `500 INTERNAL_ERROR`. Role lookup failure → `503 USER_SERVICE_UNAVAILABLE`. `BLOCKED` → `403 ACCESS_DENIED`.
 
-- Auth: public; rate limit ~10 / 60s
-- Body: `{ "email", "password" }`
-- `200` `UserResponse` + Set-Cookie `access_token`
-- Errors: `401 INVALID_CREDENTIALS`, `429`
+### `POST /api/auth/register` / `login` / `google*`
 
-### `GET /api/auth/google`
-
-- `307` → Google authorize URL (requires OAuth configured; else `503`)
-
-### `GET /api/auth/google/callback`
-
-- Query: `code`, `state`
-- Validates Redis state; creates/links user (default role `STRANGER`)
-- `307` → frontend session bridge with one-time `ticket`
-
-### `GET /api/auth/google/session`
-
-- Query: `ticket`
-- Consumes ticket; sets cookie; `307` → `{FRONTEND_URL}/files`
+- `410` retired. Sign in via the Auth hub.
 
 ### `POST /api/auth/logout`
 
-- Clears cookie; `204`
+- `410`. Logout is the hub’s job. This service does not clear cookies or delete the vault Redis key.
 
 ### `GET /api/auth/me`
 
-- Auth required
-- `200` `UserResponse`
+- Auth: identity headers (and User-Service fallback for storage role / email)
+- `200` `{ user_id, email, role }` where `role` is the **storage** role
+- Errors: `401 UNAUTHORIZED`, `403 ACCESS_DENIED`, `503 USER_SERVICE_UNAVAILABLE`
 
 ---
 
@@ -217,6 +207,20 @@ Search → `501`.
 
 Private quota overruns → `413 QUOTA_EXCEEDED`.
 
+### Keys Registry (require active private session)
+
+Same vault as Private file ops (`auth_session` Redis key). All roles except `BLOCKED`. Bootstrap on first `GET`: create `Keys/` if missing; create empty `keys.yaml` if missing.
+
+Canonical private path: `Keys/keys.yaml`.
+
+| Method | Path | Auth | Body / notes | Success |
+|---|---|---|---|---|
+| `GET` | `/api/private/keys` | Private session | Creates folder/file if absent. Invalid existing YAML → `409 KEYS_YAML_INVALID` (file not rewritten). | `{ "keys": [ { "name": string, "value": string }, ... ] }` (full values; insertion order) |
+| `PUT` | `/api/private/keys` | Private session | `{ "keys": [ { "name", "value" }, ... ] }`. Trimmed non-empty unique names and values. Writes the whole file in place (one `FileRecord`; quota = size delta). Recreates the file if it was deleted in FileManager. | Same shape as GET |
+
+Validation: empty name → `400 KEY_NAME_EMPTY`; empty value → `400 KEY_VALUE_EMPTY`; duplicate names → `400 KEY_NAME_DUPLICATE`.  
+Missing/expired vault key → `401 PRIVATE_SESSION_EXPIRED`.
+
 ---
 
 ## 8. Quota — `/api/quota`
@@ -257,7 +261,7 @@ Errors: self delete → `403`; missing user → `404 USER_NOT_FOUND`. Role colum
 
 | Method | Path | Success |
 |---|---|---|
-| `GET` | `/api/admin/storage` | `{ disks: DiskStat[] }` |
+| `GET` | `/api/admin/storage` | `{ disks: DiskStat[] }` — `DiskStat`: `id`, `bucket`, `total_bytes`, `used_bytes`, `free_bytes`, `status` |
 | `GET` | `/api/admin/storage/health` | `{ disks: { [disk_id]: "HEALTHY\|LOW_SPACE\|UNAVAILABLE" } }` |
 | `GET` | `/api/admin/archive/run` | `{ processed, skipped, errors }` |
 | `GET` | `/api/admin/archive/stats` | `{ last_run, processed, skipped, errors, total_archived_bytes }` |

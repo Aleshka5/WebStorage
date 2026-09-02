@@ -9,7 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import aioboto3
 import pytest
+from botocore.config import Config
+from moto.server import ThreadedMotoServer
 
 from app.domain.exceptions import FileNotFoundError
 from app.infrastructure.storage.base_adapter import FileNode, StorageAdapter
@@ -21,7 +24,11 @@ from app.infrastructure.storage.encrypted_adapter import (
     derive_encryption_key,
     encrypt_blob,
 )
-from app.infrastructure.storage.plain_adapter import PlainStorageAdapter
+from app.infrastructure.storage.s3_adapter import S3StorageAdapter
+from config import get_settings
+
+DISK_ID = "storage"
+BUCKET = "storage"
 
 
 async def _chunks(data: bytes) -> AsyncIterator[bytes]:
@@ -295,21 +302,6 @@ async def test_marker_plaintext_mismatch(key: bytes) -> None:
 
 
 @pytest.mark.asyncio
-async def test_base_path_gated_for_non_fs_inner(adapter: EncryptedStorageAdapter) -> None:
-    with pytest.raises(AttributeError, match="filesystem-backed"):
-        _ = adapter.base_path
-
-
-@pytest.mark.asyncio
-async def test_base_path_available_with_plain_inner(tmp_path: Path, key: bytes) -> None:
-    disk_root = tmp_path / "disk1" / "users" / "u" / "private"
-    disk_root.mkdir(parents=True)
-    inner = PlainStorageAdapter(disk_root, disk_id="disk1")
-    adapter = EncryptedStorageAdapter(inner=inner, key=key)
-    assert adapter.base_path == disk_root.resolve()
-
-
-@pytest.mark.asyncio
 async def test_plain_tmp_path_not_name_encrypted(adapter: EncryptedStorageAdapter) -> None:
     await adapter.mkdir(".tmp")
     payload = b"pending-upload"
@@ -330,32 +322,6 @@ async def test_delegates_root_prefix_and_disk_relative(adapter: EncryptedStorage
     assert adapter.disk_id == "disk1"
     assert adapter.disk_relative_prefix == "users/u/private"
     assert adapter.to_disk_relative_path("docs/a.txt") == "users/u/private/docs/a.txt"
-
-
-@pytest.mark.asyncio
-async def test_roundtrip_with_plain_adapter(tmp_path: Path, key: bytes) -> None:
-    base = tmp_path / "disk1" / "users" / str(uuid4()) / "private"
-    base.mkdir(parents=True)
-    inner = PlainStorageAdapter(base, disk_id="disk1")
-    adapter = EncryptedStorageAdapter(inner=inner, key=key)
-
-    await adapter.mkdir("docs")
-    payload = b"fs-backed encrypted"
-    await adapter.write("docs/file.bin", _chunks(payload), len(payload))
-
-    # Physical tree uses encrypted names, not logical ones.
-    assert not (base / "docs").exists()
-    listed = list(base.iterdir())
-    assert listed  # encrypted dir name present
-
-    chunks: list[bytes] = []
-    async for chunk in adapter.read("docs/file.bin"):
-        chunks.append(chunk)
-    assert b"".join(chunks) == payload
-
-    await adapter.write_marker()
-    assert (base / MARKER_FILENAME).is_file()
-    assert await adapter.validate_marker()
 
 
 @pytest.mark.asyncio
@@ -395,3 +361,69 @@ async def test_read_encrypted_blob_from_path(
     async for chunk in adapter.read_encrypted_blob(blob_file):
         chunks.append(chunk)
     assert b"".join(chunks) == payload
+
+
+@pytest.fixture(scope="module")
+def moto_endpoint() -> str:
+    server = ThreadedMotoServer(port=0, verbose=False)
+    server.start()
+    host, port = server.get_host_and_port()
+    if host in {"0.0.0.0", "::"}:
+        host = "127.0.0.1"
+    endpoint = f"http://{host}:{port}"
+    yield endpoint
+    server.stop()
+
+
+@pytest.fixture
+async def s3_inner(
+    moto_endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> S3StorageAdapter:
+    get_settings.cache_clear()
+    monkeypatch.setenv("S3_ENDPOINT_URL", moto_endpoint)
+    monkeypatch.setenv("S3_ACCESS_KEY", "testing")
+    monkeypatch.setenv("S3_SECRET_KEY", "testing")
+    monkeypatch.setenv("S3_REGION", "us-east-1")
+    monkeypatch.setenv("S3_BUCKET", BUCKET)
+    monkeypatch.setenv("S3_PATH_STYLE", "true")
+    get_settings.cache_clear()
+
+    bucket = BUCKET
+    session = aioboto3.Session()
+    config = Config(s3={"addressing_style": "path"})
+    async with session.client(
+        "s3",
+        endpoint_url=moto_endpoint,
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+        region_name="us-east-1",
+        config=config,
+    ) as client:
+        await client.create_bucket(Bucket=bucket)
+
+    adapter = S3StorageAdapter(disk_id=DISK_ID, root_prefix="users/u/private")
+    yield adapter
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_roundtrip_with_s3_adapter(s3_inner: S3StorageAdapter, key: bytes) -> None:
+    adapter = EncryptedStorageAdapter(inner=s3_inner, key=key)
+
+    await adapter.mkdir("docs")
+    payload = b"s3-backed encrypted"
+    await adapter.write("docs/file.bin", _chunks(payload), len(payload))
+
+    assert not await s3_inner.exists("docs")
+    assert not await s3_inner.exists("docs/file.bin")
+
+    chunks: list[bytes] = []
+    async for chunk in adapter.read("docs/file.bin"):
+        chunks.append(chunk)
+    assert b"".join(chunks) == payload
+
+    await adapter.write_marker()
+    assert await s3_inner.exists(MARKER_FILENAME)
+    assert await adapter.validate_marker()
+

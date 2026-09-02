@@ -3,114 +3,40 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    ports:
-      - "192.168.1.103:8000:8000"
     env_file:
       - .env
-    # Auth-Service gRPC (US-AUTHZ-10). Dial AUTH_GRPC_ADDR (default api:9090).
-    # Auth-Service compose exposes 9090 only on its internal `auth` network — do NOT
-    # publish 9090 on the public host. Keep `default` so db/redis/minio still resolve.
-    # AUTH_CALLER_HOST is the whitelist identity, not a dial target.
+    # Gateway reaches app:8000 on auth_network. Do not publish :8000 as a second public edge.
     networks:
       - default
-      - auth
+      - common_network
+      - user_network
+      - auth_network
     volumes:
       - ./backend:/app
-      - /media/aleksey/HardDisk/storage:/storage/disk1
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      # MinIO is always started with the stack for the S3 migration epic.
-      # For FS-only local use: comment out this entry and the `minio` / `minio-init` services below.
-      minio:
-        condition: service_healthy
 
+  # Local Vite only. Production SPA is served by app (single gateway upstream).
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "192.168.1.103:80:5173"
+      - "5173:5173"
     env_file:
       - .env
+    networks:
+      - default
 
-  db:
-    image: postgres:16-alpine
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    env_file:
-      - .env
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
-
-  # Object storage (MinIO). Disable with FS-only mode: comment out this service,
-  # `minio-init`, and the app `depends_on.minio` entry above.
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    ports:
-      - "192.168.1.103:9000:9000"
-      - "192.168.1.103:9001:9001"
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
-    volumes:
-      - /media/aleksey/HardDisk/storage:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # Idempotent bucket bootstrap: one bucket per STORAGE_DISKS entry + backups.
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
-      STORAGE_DISKS: ${STORAGE_DISKS:-disk1}
-      S3_BUCKET_PREFIX: ${S3_BUCKET_PREFIX:-}
-    entrypoint: >
-      /bin/sh -c "
-      set -e;
-      mc alias set local http://minio:9000 \"$${S3_ACCESS_KEY}\" \"$${S3_SECRET_KEY}\";
-      for disk in $$(echo \"$${STORAGE_DISKS}\" | tr ',' ' '); do
-        mc mb --ignore-existing \"local/$${S3_BUCKET_PREFIX}$${disk}\";
-      done;
-      mc mb --ignore-existing local/backups;
-      echo 'MinIO buckets ready';
-      "
-
-volumes:
-  pg_data:
-  redis_data:
-  minio_data:
-  caddy_data:
-  caddy_config:
-
-# Join Auth-Service's compose network so `app` can dial AUTH_GRPC_ADDR=api:9090.
-# podman-compose requires every service network to be declared here — including
-# `default` (db/redis/minio/frontend). Do not omit it or `down`/`up` fail to parse.
-# Auth-Service (`deploy/docker-compose.yml`) names that network `{project}_auth`.
-# Started from Auth-Service/deploy → deploy_auth (current homelab).
-# Started from the Auth-Service repo root → auth-service_auth.
-# Override with AUTH_DOCKER_NETWORK if `podman network ls` / `docker network ls` differs.
-# Do not add a host port mapping for 9090 here.
+# Common (postgres, redis, minio) is already up in another project. Do not start it here.
+# User-Service compose creates user_network. Auth-Service compose creates AUTH_DOCKER_NETWORK.
+# From Auth-Service/deploy → deploy_auth; from the Auth-Service repo root → auth-service_auth.
 networks:
   default: {}
-  auth:
+  common_network:
+    external: true
+    name: common_network
+  user_network:
+    external: true
+    name: user_network
+  auth_network:
     external: true
     name: ${AUTH_DOCKER_NETWORK:-deploy_auth}
