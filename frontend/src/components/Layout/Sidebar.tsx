@@ -1,6 +1,7 @@
 import { useEffect, useState, type ComponentType } from "react";
 import { NavLink } from "react-router-dom";
 import {
+  Briefcase,
   Camera,
   ChevronLeft,
   ChevronRight,
@@ -26,12 +27,13 @@ const MENU_ITEMS: MenuItem[] = [
   { to: "/files", label: "Files", icon: Folder },
   { to: "/private", label: "Private", icon: Lock },
   { to: "/keys", label: "Keys Registry", icon: Key },
+  { to: "/resumes", label: "Resumes", icon: Briefcase },
   { to: "/shared", label: "Shared", icon: Users },
   { to: "/admin", label: "Admin", icon: Settings },
 ];
 
 function isMenuItemVisible(to: string, role: string | undefined): boolean {
-  if (to === "/shared") {
+  if (to === "/shared" || to === "/resumes") {
     return role === "FAMILY" || role === "ADMIN";
   }
 

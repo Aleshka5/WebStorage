@@ -20,6 +20,10 @@ def user_private_root_prefix(user_id: UUID) -> str:
     return f"users/{user_id}/private"
 
 
+def user_resumes_root_prefix(user_id: UUID) -> str:
+    return f"users/{user_id}/resumes"
+
+
 def shared_root_prefix() -> str:
     return "shared"
 

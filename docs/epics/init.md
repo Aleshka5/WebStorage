@@ -11,6 +11,7 @@
 | Private Encrypted Storage | [private-storage](./private-storage/init.md) | Implemented | P0 |
 | Keys Registry | [keys-registry](./keys-registry/init.md) | Implemented | P1 |
 | Shared Folder | [shared-storage](./shared-storage/init.md) | Implemented | P1 |
+| Resumes (Job Applications) | [resumes](./resumes/init.md) | Implemented | P1 |
 | Admin Panel | [admin-panel](./admin-panel/init.md) | Partial; **role writes → E-AUTHZ** | P1 |
 | Storage Infrastructure | [storage-infrastructure](./storage-infrastructure/init.md) | Implemented (strategy variants pending) | P1 |
 | Archiving & Backup | [archiving-backup](./archiving-backup/init.md) | Backend implemented; FE ops limited | P2 |

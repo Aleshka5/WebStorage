@@ -2,13 +2,19 @@ import { useEffect, useState } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { AppLayout } from "./components/Layout/AppLayout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { ResumesGuard } from "./components/Resumes/ResumesGuard";
 import { Button } from "./components/ui/Button";
 import { ErrorMessage } from "./components/ui/ErrorMessage";
 import AdminPage from "./pages/AdminPage";
+import AllVacanciesPage from "./pages/AllVacanciesPage";
 import FilesPage from "./pages/FilesPage";
 import PhotosPage from "./pages/PhotosPage";
 import KeysRegistryPage from "./pages/KeysRegistryPage";
 import PrivatePage from "./pages/PrivatePage";
+import ResumeCompanyPage from "./pages/ResumeCompanyPage";
+import ResumeCountryPage from "./pages/ResumeCountryPage";
+import ResumeVacancyPage from "./pages/ResumeVacancyPage";
+import ResumesPage from "./pages/ResumesPage";
 import SharedPage from "./pages/SharedPage";
 import { useAuthStore } from "./store/auth";
 
@@ -67,6 +73,21 @@ const router = createBrowserRouter([
       { path: "/photos", element: <PhotosPage /> },
       { path: "/private", element: <PrivatePage /> },
       { path: "/keys", element: <KeysRegistryPage /> },
+      {
+        path: "/resumes",
+        element: <ResumesGuard />,
+        children: [
+          { index: true, element: <ResumesPage /> },
+          { path: ":country", element: <ResumeCountryPage /> },
+          { path: ":country/:company", element: <ResumeCompanyPage /> },
+          { path: ":country/:company/:vacancy", element: <ResumeVacancyPage /> },
+        ],
+      },
+      {
+        path: "/vacancies",
+        element: <ResumesGuard />,
+        children: [{ index: true, element: <AllVacanciesPage /> }],
+      },
       { path: "/shared", element: <SharedPage /> },
       { path: "/admin", element: <AdminPage /> },
     ],

@@ -34,6 +34,8 @@ Related: [Data Models.md](./Data%20Models.md), [Design Spec.md](./Design%20Spec.
 | `UNSUPPORTED_FORMAT` / `PATH_TRAVERSAL_DETECTED` | 400 |
 | `KEY_NAME_EMPTY` / `KEY_VALUE_EMPTY` / `KEY_NAME_DUPLICATE` | 400 |
 | `KEYS_YAML_INVALID` | 409 (existing `keys.yaml` is not a flat string map; GET does not overwrite) |
+| `RESUME_NAME_INVALID` / `RESUME_DEPTH_INVALID` / `RESUME_STATUS_INVALID` / `RESUME_FIELD_INVALID` | 400 |
+| `RESUME_NODE_EXISTS` / `RESUME_META_INVALID` | 409 |
 | `TOO_MANY_ATTEMPTS` | 429 (+ optional `retry_after`) |
 | `DISK_UNAVAILABLE` | 503 |
 | `USER_SERVICE_UNAVAILABLE` | 503 (User-Service down/timeout/failed role lookup; **E-GWUS**) |
@@ -241,7 +243,101 @@ Note: TZ historically mentioned `total_bytes`; **implemented field is `limit_byt
 
 ---
 
-## 9. Admin — `/api/admin` (ADMIN only)
+## 9. Resumes — `/api/resumes` (FAMILY | ADMIN)
+
+Job-application workspace. Tree levels are S3 directories under `users/{user_id}/resumes`;
+metadata is YAML written through the shared `FileService`. See
+[E-RESUMES](./epics/resumes/init.md) and [ADR-010](./adr/ADR-010-resumes-yaml-tree-on-s3.md).
+
+`path` is always relative to the resumes root and identifies a node by its depth:
+`""` = root (children are countries), `"{country}"`, `"{country}/{company}"`,
+`"{country}/{company}/{vacancy}"`.
+
+### Tree
+
+| Method | Path | Body / Query | Success |
+|---|---|---|---|
+| `GET` | `/api/resumes/tree` | `path` (default `""`) | `{ path, level, items: ResumeNode[] }` |
+| `POST` | `/api/resumes/tree` | `{ path, name }` | `201` `ResumeNode` |
+| `PATCH` | `/api/resumes/tree` | `{ path, new_name }` | `200` `ResumeNode` |
+| `DELETE` | `/api/resumes/tree` | `path` (required) | `204` |
+
+**ResumeNode**: `name`, `path`, `level` (`COUNTRY` \| `COMPANY` \| `VACANCY`), `child_count`,
+`modified_at`, and for `VACANCY` only: `status_id` (`string \| null`), `website_url` (`string`).
+
+`level` is derived from depth. `GET` on a vacancy path returns its attachment folders, not vacancies.
+`POST` below vacancy depth → `400 RESUME_DEPTH_INVALID`; create folders inside a vacancy through
+`/api/resumes/files/mkdir` instead. Creating a vacancy also writes its `meta.yaml`; the optional
+`status_id` may be supplied on `POST` and must exist in the status list.
+
+`DELETE` is recursive and hard: objects, `file_records` rows and quota are released together.
+
+### Flat vacancy list
+
+| Method | Path | Query | Success |
+|---|---|---|---|
+| `GET` | `/api/resumes/vacancies` | — | `{ items: VacancyListItem[] }` |
+
+**VacancyListItem**: `country`, `company`, `name`, `path`, `status_id` (`string | null`),
+`website_url` (`string`), `modified_at`.
+
+Every vacancy in the tree, ordered by country, then company, then vacancy name (case-insensitive).
+Countries and companies with no vacancies contribute nothing. A vacancy whose `meta.yaml` is corrupt
+is still listed, with `status_id: null` and an empty `website_url` — the same degradation the tree
+listing applies. Cost is one listing per country and per company plus one `meta.yaml` read per
+vacancy (ADR-010).
+
+### Vacancy metadata
+
+| Method | Path | Body / Query | Success |
+|---|---|---|---|
+| `GET` | `/api/resumes/vacancy` | `path` (vacancy) | `200` `VacancyMeta` |
+| `PUT` | `/api/resumes/vacancy` | `path` + `{ website_url, status_id, fields }` | `200` `VacancyMeta` |
+
+**VacancyMeta**: `path`, `name`, `website_url` (`string`, `""` when unset), `status_id`
+(`string \| null`), `fields` (`[{ name, value }]`, order preserved).
+
+`website_url` is optional. A non-empty value without a scheme is stored as `https://<value>`.
+`status_id` that no longer exists is returned as-is and rendered as “No status” (statuses detach on
+delete). Whole-document replacement, last write wins.
+
+### Statuses
+
+| Method | Path | Body | Success |
+|---|---|---|---|
+| `GET` | `/api/resumes/statuses` | — | `{ statuses: ResumeStatus[] }` |
+| `PUT` | `/api/resumes/statuses` | `{ statuses: ResumeStatus[] }` | `{ statuses: ResumeStatus[] }` |
+
+**ResumeStatus**: `id` (uuid4 hex; server-generated when omitted on `PUT`), `name`, `color`
+(`#RRGGBB`).
+
+First `GET` seeds `statuses.yaml` with Applied / Interview / Offer / Rejected when the file is
+missing. `PUT` replaces the whole list; ids are stable across renames so vacancy references survive.
+
+### Vacancy files — `/api/resumes/files`
+
+Same request/response contract as [§4 Files](#4--files--apifiles-authenticated), scoped to
+`FileSection.RESUMES`: `GET ""`, `POST /upload`, `POST /upload-zip`, `GET /download`,
+`GET /download-folder`, `DELETE ""`, `POST /mkdir`, `PATCH /rename`, `GET /search` (`501`).
+`path` is relative to the resumes root, so the SPA passes
+`{country}/{company}/{vacancy}/…`. Quota errors behave exactly as on `/api/files`.
+
+### Error codes
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `RESUME_NAME_INVALID` | 400 | Empty/oversized name, `/` or `\`, `.`/`..`, or a reserved name (`meta.yaml`, `statuses.yaml`) |
+| `RESUME_DEPTH_INVALID` | 400 | Tree operation targets a depth outside country/company/vacancy |
+| `RESUME_STATUS_INVALID` | 400 | Empty or duplicate status name, or a colour that is not `#RRGGBB` |
+| `RESUME_FIELD_INVALID` | 400 | Empty or duplicate vacancy field name |
+| `RESUME_NODE_EXISTS` | 409 | A sibling with that name already exists (case-insensitive) |
+| `RESUME_META_INVALID` | 409 | `meta.yaml` / `statuses.yaml` is not valid YAML of the expected shape; read does not overwrite |
+| `ACCESS_DENIED` | 403 | STRANGER (or BLOCKED) on any resumes route |
+| `FILE_NOT_FOUND` | 404 | Unknown node path |
+
+---
+
+## 10. Admin — `/api/admin` (ADMIN only)
 
 ### Users
 
@@ -272,7 +368,7 @@ Errors: self delete → `403`; missing user → `404 USER_NOT_FOUND`. Role colum
 
 ---
 
-## 10. Frontend API Clients
+## 11. Frontend API Clients
 
 | Client | Covers |
 |---|---|
@@ -281,10 +377,11 @@ Errors: self delete → `403`; missing user → `404 USER_NOT_FOUND`. Role colum
 | `photosApi.ts` | Photos |
 | `privateApi.ts` | Unlock/session/quota/reset (+ file ops via FileManager) |
 | `adminApi.ts` | Users + storage |
+| `resumesApi.ts` | Resumes tree, vacancy metadata, statuses (+ file ops via FileManager) |
 
 ---
 
-## 11. Contract Change Rules
+## 12. Contract Change Rules
 
 1. Additive fields preferred; breaking renames require Master Document + ADR update.
 2. New `error_code` values must be added to `ErrorCode` enum and this doc.

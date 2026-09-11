@@ -355,6 +355,37 @@ class FileRepository:
         )
         return len(models)
 
+    async def list_active_under_prefix(
+        self,
+        user_id: UUID,
+        section: FileSection,
+        prefix: str,
+    ) -> list[FileRecordEntity]:
+        """Return COMMITTED and ARCHIVED records under a directory prefix.
+
+        ARCHIVED rows are included so a recursive delete releases their quota
+        and their archive blob instead of orphaning both.
+        """
+        prefix_with_slash = f"{prefix.rstrip('/')}/"
+        result = await self._session.execute(
+            select(FileRecordModel).where(
+                FileRecordModel.user_id == user_id,
+                FileRecordModel.section == FileSectionModel(section.value),
+                FileRecordModel.status.in_(
+                    (FileStatusModel.COMMITTED, FileStatusModel.ARCHIVED),
+                ),
+                FileRecordModel.relative_path.startswith(prefix_with_slash),
+            )
+        )
+        records = [self._to_entity(model) for model in result.scalars().all()]
+        logger.info(
+            "Listed {} active file records for user {} under prefix {}",
+            len(records),
+            user_id,
+            prefix,
+        )
+        return records
+
     async def update_relative_path_prefix_in_section(
         self,
         section: FileSection,

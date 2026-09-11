@@ -31,6 +31,40 @@ import { FileList } from "./FileList";
 interface FileManagerProps {
   apiPrefix: string;
   mode: FileManagerMode;
+  basePath?: string;
+  hiddenNames?: string[];
+}
+
+function normalizeBasePath(basePath?: string): string {
+  return (basePath ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function toApiPath(basePath: string, path: string): string {
+  if (!basePath) {
+    return path;
+  }
+
+  const suffix = path.replace(/^\/+/, "");
+
+  return suffix ? `${basePath}/${suffix}` : basePath;
+}
+
+function toLocalPath(basePath: string, path: string): string {
+  if (!basePath) {
+    return path;
+  }
+
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+
+  if (normalized === basePath) {
+    return "/";
+  }
+
+  if (normalized.startsWith(`${basePath}/`)) {
+    return `/${normalized.slice(basePath.length + 1)}`;
+  }
+
+  return path;
 }
 
 function sortItems(
@@ -63,15 +97,18 @@ function sortItems(
   });
 }
 
-function buildBreadcrumbs(currentPath: string): Array<{ label: string; path: string }> {
+function buildBreadcrumbs(
+  currentPath: string,
+  rootLabel: string,
+): Array<{ label: string; path: string }> {
   const normalized = currentPath.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
 
   if (normalized === "/") {
-    return [{ label: "Root", path: "/" }];
+    return [{ label: rootLabel, path: "/" }];
   }
 
   const segments = normalized.split("/").filter(Boolean);
-  const crumbs: Array<{ label: string; path: string }> = [{ label: "Root", path: "/" }];
+  const crumbs: Array<{ label: string; path: string }> = [{ label: rootLabel, path: "/" }];
 
   segments.forEach((segment, index) => {
     crumbs.push({
@@ -83,7 +120,7 @@ function buildBreadcrumbs(currentPath: string): Array<{ label: string; path: str
   return crumbs;
 }
 
-export function FileManager({ apiPrefix, mode }: FileManagerProps) {
+export function FileManager({ apiPrefix, mode, basePath, hiddenNames }: FileManagerProps) {
   const [currentPath, setCurrentPath] = useState("/");
   const [items, setItems] = useState<FileNode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -108,20 +145,43 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
   const { uploads, uploadFiles, clearFinished } = useFileUpload(apiPrefix);
   const fetchQuota = useQuotaStore((state) => state.fetchQuota);
 
+  const root = normalizeBasePath(basePath);
+  const hiddenNamesKey = (hiddenNames ?? []).join("|");
+
+  const hiddenNameSet = useMemo(
+    () => new Set(hiddenNamesKey ? hiddenNamesKey.split("|") : []),
+    [hiddenNamesKey],
+  );
+
+  const rootLabel = useMemo(() => {
+    const segments = root.split("/").filter(Boolean);
+    return segments.length > 0 ? segments[segments.length - 1] : "Root";
+  }, [root]);
+
   const sortedItems = useMemo(
     () => sortItems(items, sortField, sortDirection),
     [items, sortField, sortDirection],
   );
 
-  const breadcrumbs = useMemo(() => buildBreadcrumbs(currentPath), [currentPath]);
+  const breadcrumbs = useMemo(
+    () => buildBreadcrumbs(currentPath, rootLabel),
+    [currentPath, rootLabel],
+  );
 
   const refreshDirectory = useCallback(async () => {
     setIsLoading(true);
     setListErrorCode(null);
 
     try {
-      const data = await listFiles(apiPrefix, currentPath);
-      setItems(data);
+      const data = await listFiles(apiPrefix, toApiPath(root, currentPath));
+      const visibleItems =
+        hiddenNameSet.size > 0 ? data.filter((item) => !hiddenNameSet.has(item.name)) : data;
+
+      setItems(
+        root
+          ? visibleItems.map((item) => ({ ...item, path: toLocalPath(root, item.path) }))
+          : visibleItems,
+      );
     } catch (error) {
       const detail = getApiErrorDetail(error);
       setListErrorCode(detail?.error_code ?? "INTERNAL_ERROR");
@@ -129,7 +189,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [apiPrefix, currentPath]);
+  }, [apiPrefix, currentPath, hiddenNameSet, root]);
 
   useEffect(() => {
     void refreshDirectory();
@@ -169,7 +229,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
   };
 
   const handleUpload = async (files: File[]) => {
-    await uploadFiles(files, currentPath);
+    await uploadFiles(files, toApiPath(root, currentPath));
   };
 
   const handleZipUpload = async (zipFile: File) => {
@@ -183,7 +243,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
     try {
       const result = await uploadZipFolder(
         apiPrefix,
-        currentPath,
+        toApiPath(root, currentPath),
         zipFile,
         (progress) => {
           setZipUploadProgress((prev) =>
@@ -239,7 +299,7 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
 
   const handleCreateFolder = async (name: string) => {
     try {
-      await createDirectory(apiPrefix, currentPath, name);
+      await createDirectory(apiPrefix, toApiPath(root, currentPath), name);
       await refreshDirectory();
       showSuccessToast("Folder created");
     } catch (error) {
@@ -249,20 +309,20 @@ export function FileManager({ apiPrefix, mode }: FileManagerProps) {
   };
 
   const handleDownload = async (item: FileNode) => {
-    await downloadFile(apiPrefix, item.path, item.name);
+    await downloadFile(apiPrefix, toApiPath(root, item.path), item.name);
   };
 
   const handleDownloadFolder = async (item: FileNode) => {
-    await downloadFolder(apiPrefix, item.path, item.name);
+    await downloadFolder(apiPrefix, toApiPath(root, item.path), item.name);
   };
 
   const handleRename = async (item: FileNode, newName: string) => {
-    await renameEntry(apiPrefix, item.path, newName);
+    await renameEntry(apiPrefix, toApiPath(root, item.path), newName);
     await refreshDirectory();
   };
 
   const handleDelete = async (item: FileNode) => {
-    await deleteFile(apiPrefix, item.path);
+    await deleteFile(apiPrefix, toApiPath(root, item.path));
     await refreshDirectory();
     void fetchQuota();
   };

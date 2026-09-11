@@ -31,6 +31,8 @@ frontend/
 │   ├── index.css                   ← глобальные стили
 │   ├── components/
 │   │   ├── Layout/                 ← AppLayout, Header, Sidebar, StorageUsageBar
+│   │   ├── Resumes/                ← ResumeTreeSection, ResumeStatusEditor, ResumeStatusBadge,
+│   │   │                             ResumeBreadcrumbs, ResumesGuard
 │   │   ├── FileManager/            ← FileManager, FileList, FileItem, DropZone, CreateFolderDialog
 │   │   ├── PhotoGrid/              ← PhotoGrid, PhotoItem, Lightbox, PhotoUploadFab
 │   │   ├── ui/                     ← Button, Input, Modal, ErrorMessage
@@ -93,6 +95,11 @@ frontend/
 | `/photos` | PhotosPage | yes | all |
 | `/private` | PrivatePage (`FileManager mode=encrypted`) | yes | all |
 | `/keys` | KeysRegistryPage (same private unlock as `/private`) | yes | all |
+| `/resumes` | ResumesPage — страны | yes | FAMILY, ADMIN |
+| `/resumes/:country` | ResumeCountryPage — компании | yes | FAMILY, ADMIN |
+| `/resumes/:country/:company` | ResumeCompanyPage — вакансии + фильтр по статусу | yes | FAMILY, ADMIN |
+| `/resumes/:country/:company/:vacancy` | ResumeVacancyPage — URL, поля, `FileManager` | yes | FAMILY, ADMIN |
+| `/vacancies` | AllVacanciesPage — плоский список Country/Company/Vacancy/Status | yes | FAMILY, ADMIN |
 | `/shared` | SharedPage (`FileManager mode=plain`) | yes | FAMILY, ADMIN |
 | `/admin` | AdminPage | yes | ADMIN |
 
@@ -231,6 +238,23 @@ listKeys() -> Promise<{ keys: { name: string; value: string }[] }>
 saveKeys(keys) -> Promise<{ keys: { name: string; value: string }[] }>
 ```
 
+### resumesApi.ts
+
+```typescript
+listResumeTree(path) -> Promise<ResumeTreeResponse>
+listAllVacancies() -> Promise<VacancyListResponse>
+createResumeNode({ path, name, status_id? }) -> Promise<ResumeNode>
+renameResumeNode({ path, new_name }) -> Promise<ResumeNode>
+deleteResumeNode(path) -> Promise<void>
+getVacancyMeta(path) -> Promise<VacancyMeta>
+saveVacancyMeta(path, { website_url, status_id, fields }) -> Promise<VacancyMeta>
+listResumeStatuses() -> Promise<{ statuses: ResumeStatus[] }>
+saveResumeStatuses(statuses) -> Promise<{ statuses: ResumeStatus[] }>
+```
+
+Типы — `src/types/resumes.ts`. Хелперы — `src/utils/resumes.ts`
+(`joinResumePath`, `buildResumeRoute`, `validateResumeNodeName`, `normalizeWebsiteUrl`).
+
 ### adminApi.ts
 
 ```typescript
@@ -276,6 +300,7 @@ CSS Grid/Flex: `h-screen`, `bg-zinc-950`. Outlet рендерит дочерни
 | Folder | Файлы | /files | all |
 | Lock | Приватное | /private | all |
 | Key | Keys Registry | /keys | all |
+| Briefcase | Resumes | /resumes | FAMILY, ADMIN |
 | Users | Общее | /shared | FAMILY, ADMIN |
 | Settings | Админка | /admin | ADMIN |
 
@@ -300,10 +325,18 @@ CSS Grid/Flex: `h-screen`, `bg-zinc-950`. Outlet рендерит дочерни
 
 ```typescript
 interface FileManagerProps {
-  apiPrefix: string;   // "/api/files" | "/api/private" | "/api/shared"
+  apiPrefix: string;      // "/api/files" | "/api/private" | "/api/shared" | "/api/resumes/files"
   mode: "plain" | "encrypted";
+  basePath?: string;      // префикс ко всем путям API; breadcrumb укореняется здесь
+  hiddenNames?: string[]; // имена, скрываемые из листинга (например "meta.yaml")
 }
 ```
+
+`basePath` и `hiddenNames` необязательны и добавлены для страницы вакансии
+([E-RESUMES](./epics/resumes/init.md)). Без них компонент ведёт себя ровно как раньше:
+`toApiPath` / `toLocalPath` при пустом `basePath` — тождественные функции, поэтому `/files`,
+`/private` и `/shared` не изменились. `currentPath` всегда относителен `basePath`, а пути
+элементов листинга приводятся обратно к локальным — подняться выше базы невозможно.
 
 #### Функционал
 
@@ -534,6 +567,46 @@ Flash message через location.state.message.
 - Add (modal: name + value), delete (local until Save), explicit Save (`PUT`). Save disabled when pristine.
 - Empty state: “No keys yet”. No edit of existing name/value. No quota bar.
 - Reuses `homecloud:private-session-expired`.
+
+#### Resumes pages
+
+Файлы: `src/pages/ResumesPage.tsx`, `ResumeCountryPage.tsx`, `ResumeCompanyPage.tsx`,
+`ResumeVacancyPage.tsx`. Общие компоненты — `src/components/Resumes/`.
+
+- `ResumesGuard` — route gate FAMILY/ADMIN; STRANGER видит inline `ACCESS_DENIED` со ссылкой на Files
+  (не редирект, в отличие от SharedPage).
+- `ResumeTreeSection` — один переиспользуемый компонент уровня дерева (список + диалоги
+  добавления / переименования / удаления, состояния loading / 404 / error). Используется всеми
+  тремя уровнями. Опциональный `statuses` добавляет выбор статуса в диалог создания вакансии.
+  Фильтрации не содержит: она живёт на `AllVacanciesPage`.
+- Кнопка добавления по центру сверху, пока список пуст, и в конце списка, когда записи есть.
+- `RESUME_NODE_EXISTS` и `RESUME_NAME_INVALID` показываются inline в диалоге, а не только тостом.
+- `ResumeStatusBadge` — цветная точка + подпись; висячий или пустой `status_id` → нейтральное
+  «No status».
+- `ResumeStatusEditor` — панель (не модалка: общий `Modal` ограничен `max-w-sm`), add / rename /
+  recolor / delete, explicit Save по pristine-сигнатуре, как в KeysRegistryPage.
+- `ResumeVacancyPage` — селектор статуса, необязательный Website URL (внешняя ссылка при
+  заполнении), inline-редактируемый список полей `name: value`, explicit Save, предупреждение о
+  несохранённых изменениях (`useBlocker` + `beforeunload`), и ниже
+  `<FileManager apiPrefix="/api/resumes/files" mode="plain" basePath={vacancyPath}
+  hiddenNames={["meta.yaml"]} />`. FileManager монтируется с `key` по пути вакансии, чтобы при
+  переходе между вакансиями сбрасываться в её корень.
+
+#### AllVacanciesPage
+
+Файл: `src/pages/AllVacanciesPage.tsx`
+
+- Плоская таблица всех вакансий: Country / Company / Vacancy / Status.
+- Первые три колонки — ссылки на страницы страны, компании и вакансии (`buildResumeRoute`).
+- Статус резолвится по `status_id` через список статусов и рендерится `ResumeStatusBadge`;
+  висячий или пустой id → «No status».
+- Маршрут верхнего уровня `/vacancies` (внутри `ResumesGuard`), а не `/resumes/all`: статический
+  дочерний сегмент затенил бы страну с именем «all».
+- Вход — кнопки «All vacancies» на `ResumesPage` и в тулбаре `ResumeCompanyPage`; обратно —
+  «Back to countries».
+- `VacancyStatusFilter` — мультивыбор статусов + «No status», режимы **Show only** (белый список) и
+  **Hide** (чёрный список), Clear и счётчик «Showing X of Y». Пустой выбор ничего не фильтрует.
+  Висячий `status_id` попадает в «No status». Фильтрация клиентская: список уже загружен целиком.
 
 #### SharedPage
 

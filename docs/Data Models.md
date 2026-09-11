@@ -34,7 +34,9 @@ Request-time **storage** role from `X-Storage-Role` or User-Service. Not stored 
 
 ### FileSection
 
-`PHOTOS` | `FILES` | `PRIVATE` | `SHARED`
+`PHOTOS` | `FILES` | `PRIVATE` | `SHARED` | `RESUMES`
+
+`RESUMES` (Alembic `006`) scopes the job-application workspace at `users/{user_id}/resumes`. Plain, never encrypted; counts toward the total quota only. See [E-RESUMES](./epics/resumes/init.md).
 
 ### FileStatus
 
@@ -49,7 +51,7 @@ Stale `PENDING` older than 1 hour → maintenance cleanup.
 
 ### ErrorCode
 
-`QUOTA_EXCEEDED`, `UNSUPPORTED_FORMAT`, `PRIVATE_SESSION_EXPIRED`, `DISK_UNAVAILABLE`, `PATH_TRAVERSAL_DETECTED`, `FILE_NOT_FOUND`, `ACCESS_DENIED`, `TOO_MANY_ATTEMPTS`, `EMAIL_ALREADY_EXISTS`, `INVALID_CREDENTIALS`, `UNAUTHORIZED`, `USER_NOT_FOUND`, `INTERNAL_ERROR` (+ router-local `NOT_IMPLEMENTED`).
+`QUOTA_EXCEEDED`, `UNSUPPORTED_FORMAT`, `PRIVATE_SESSION_EXPIRED`, `DISK_UNAVAILABLE`, `PATH_TRAVERSAL_DETECTED`, `FILE_NOT_FOUND`, `ACCESS_DENIED`, `TOO_MANY_ATTEMPTS`, `EMAIL_ALREADY_EXISTS`, `INVALID_CREDENTIALS`, `UNAUTHORIZED`, `USER_NOT_FOUND`, `INTERNAL_ERROR`, `RESUME_NAME_INVALID`, `RESUME_DEPTH_INVALID`, `RESUME_STATUS_INVALID`, `RESUME_FIELD_INVALID`, `RESUME_NODE_EXISTS`, `RESUME_META_INVALID` (+ router-local `NOT_IMPLEMENTED`).
 
 ### Disk health (admin)
 
@@ -164,6 +166,10 @@ All keys live in the single MinIO bucket `storage`. Paths are POSIX-style object
 | Files | `users/{user_id}/files/{relative}` |
 | Private | `users/{user_id}/private/{encrypted_relative}` + `.marker` |
 | Keys Registry | Same private vault; logical path `Keys/keys.yaml` (normal `FileRecord`, section `PRIVATE`) |
+| Resumes tree | `users/{user_id}/resumes/{country}/{company}/{vacancy}/` (directories only) |
+| Resume vacancy meta | `users/{user_id}/resumes/{country}/{company}/{vacancy}/meta.yaml` (`FileRecord`, section `RESUMES`) |
+| Resume statuses | `users/{user_id}/resumes/statuses.yaml` (`FileRecord`, section `RESUMES`) |
+| Resume attachments | `users/{user_id}/resumes/{country}/{company}/{vacancy}/{relative}` |
 | Shared | `shared/{relative}` |
 | DB backups | `_meta/backups/db_backup_*.sql.zst` (bucket `storage`) |
 | Archive / thumbnail staging | process `/tmp` only; persisted via `StorageAdapter` |
@@ -190,10 +196,41 @@ Identity does not come from this cookie. Logout is not implemented here; hub log
 | `PhotoItem` | `id`, `preview_url`, `original_url`, `created_at`, `size` |
 | `QuotaResponse` | `used_bytes`, `limit_bytes`, `private_bytes`, `private_limit_bytes` |
 | `KeysListResponse` | `keys: [{ name, value }]` (full values; flat YAML map on disk) |
+| `ResumeNode` | `name`, `path`, `level` (`COUNTRY`\|`COMPANY`\|`VACANCY`), `child_count`, `modified_at`, `status_id?`, `website_url?` |
+| `VacancyMeta` | `path`, `name`, `website_url`, `status_id \| null`, `fields: [{ name, value }]` |
+| `ResumeStatus` | `id` (uuid4 hex), `name`, `color` (`#RRGGBB`) |
+| `VacancyListItem` | `country`, `company`, `name`, `path`, `status_id \| null`, `website_url`, `modified_at` |
 | `DiskStat` | id, bucket, total/used/free bytes, status |
 | `UserAdminView` | identity + role + activity + usage/limits |
 
-Frontend mirrors: `types/files.ts`, `types/photos.ts`, auth store `User`.
+Frontend mirrors: `types/files.ts`, `types/photos.ts`, `types/resumes.ts`, auth store `User`.
+
+### Resume YAML documents
+
+Not database rows — plain objects written through `FileService.overwrite_file`, one `FileRecord`
+each, quota charged as a size delta on rewrite.
+
+`statuses.yaml` (one per user):
+
+```yaml
+statuses:
+  - id: 7f4c1e0a9b2d4f6e8a1c3b5d7e9f0a2b
+    name: Applied
+    color: "#38BDF8"
+```
+
+`meta.yaml` (one per vacancy):
+
+```yaml
+website_url: https://example.com/jobs/42
+status_id: 7f4c1e0a9b2d4f6e8a1c3b5d7e9f0a2b
+fields:
+  - name: Salary
+    value: 4000 EUR
+```
+
+`status_id` has no referential integrity by design: deleting a status leaves the id dangling and the
+vacancy renders as "No status" (ADR-010).
 
 ---
 

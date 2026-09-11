@@ -721,6 +721,55 @@ class FileService:
         )
         await self._adapter.delete(normalized)
 
+    async def delete_directory_recursive(self, user_id: UUID, path: str) -> int:
+        """Delete a directory with its blobs, file records and quota in one pass.
+
+        Returns the number of bytes released. Unlike ``delete_by_path`` this
+        does not leave orphaned ``file_records`` rows behind a deleted prefix.
+        """
+        normalized = self._normalize_path(path)
+        if not normalized:
+            raise FileNotFoundError("Refusing to delete the section root")
+
+        if not await self._adapter.exists(normalized):
+            raise FileNotFoundError(f"Path {path!r} not found")
+
+        if not await self._is_directory(normalized):
+            raise FileNotFoundError(f"Path {path!r} is not a directory")
+
+        disk_prefix = self._adapter.to_disk_relative_path(normalized)
+        records = await self._file_repo.list_active_under_prefix(
+            user_id,
+            self._section,
+            disk_prefix,
+        )
+        released_bytes = sum(record.size_bytes for record in records)
+
+        logger.info(
+            "Recursively deleting directory {} for user {} ({} records, {} bytes)",
+            normalized,
+            user_id,
+            len(records),
+            released_bytes,
+        )
+        await self._adapter.delete(normalized)
+
+        for record in records:
+            if record.is_archived:
+                await self._delete_archived_file(record)
+            await self._file_repo.delete(record.id)
+
+        if released_bytes:
+            await self._quota_repo.decrement(user_id, released_bytes, self._section)
+
+        logger.info(
+            "Recursive delete completed for user {} at {} ({} bytes released)",
+            user_id,
+            normalized,
+            released_bytes,
+        )
+        return released_bytes
+
     async def _merge_archived_nodes(
         self,
         user_id: UUID,

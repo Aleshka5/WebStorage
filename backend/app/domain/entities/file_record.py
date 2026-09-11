@@ -9,6 +9,7 @@ class FileSection(StrEnum):
     FILES = "FILES"
     PRIVATE = "PRIVATE"
     SHARED = "SHARED"
+    RESUMES = "RESUMES"
 
 
 class FileStatus(StrEnum):

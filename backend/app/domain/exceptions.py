@@ -83,3 +83,19 @@ class KeysValidationError(Exception):
 
 class KeysYamlInvalidError(Exception):
     """Raised when keys.yaml is not valid YAML or not a flat string mapping."""
+
+
+class ResumeValidationError(Exception):
+    """Raised when a resumes payload fails name, depth, status or field validation."""
+
+    def __init__(self, message: str, *, error_code: ErrorCode) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
+class ResumeNodeExistsError(Exception):
+    """Raised when a resumes sibling with the same name already exists."""
+
+
+class ResumeMetaInvalidError(Exception):
+    """Raised when meta.yaml or statuses.yaml is not valid YAML of the expected shape."""

@@ -26,6 +26,8 @@ from app.presentation.routers.file_router import router as file_router, shared_r
 from app.presentation.routers.photo_router import router as photo_router
 from app.presentation.routers.private_router import router as private_router
 from app.presentation.routers.quota_router import router as quota_router
+from app.presentation.routers.resume_router import files_router as resume_files_router
+from app.presentation.routers.resume_router import router as resume_router
 from app.presentation.exception_handlers import register_exception_handlers
 from app.presentation.middleware.rate_limit import AuthRateLimitMiddleware
 from config import get_settings
@@ -196,6 +198,8 @@ app.include_router(file_router)
 app.include_router(shared_router)
 app.include_router(photo_router)
 app.include_router(private_router)
+app.include_router(resume_router)
+app.include_router(resume_files_router)
 
 
 @app.get("/health")

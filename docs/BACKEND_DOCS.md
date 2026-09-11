@@ -94,7 +94,7 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 - `can_access_shared()` -> FAMILY, ADMIN
 - `can_access_admin()` -> только ADMIN
 
-**FileSection** (`StrEnum`): `PHOTOS`, `FILES`, `PRIVATE`, `SHARED`
+**FileSection** (`StrEnum`): `PHOTOS`, `FILES`, `PRIVATE`, `SHARED`, `RESUMES` (Alembic `006`)
 
 **FileStatus** (`StrEnum`): `PENDING`, `COMMITTED`, `ARCHIVED`, `DELETED`
 - `PENDING` -> файл в процессе загрузки; если старше 1 часа — чистится фоновой задачей
@@ -124,6 +124,9 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 | `PrivateSessionExpiredError` | Ключ шифрования истёк | 401 |
 | `KeysValidationError` | Пустое/дублирующееся имя или значение ключа | 400 |
 | `KeysYamlInvalidError` | `keys.yaml` невалиден или не mapping | 409 |
+| `ResumeValidationError` | Имя узла / поля / статуса невалидно (несёт свой `error_code`) | 400 |
+| `ResumeNodeExistsError` | Узел с таким именем уже есть среди соседей | 409 |
+| `ResumeMetaInvalidError` | `meta.yaml` / `statuses.yaml` невалиден | 409 |
 | `UserNotFoundError` | Пользователь не найден | 404 |
 | `SelfRoleChangeError` | Админ пытается сменить свою роль | 403 |
 | `SelfUserDeletionError` | Админ пытается удалить свой аккаунт | 403 |
@@ -194,6 +197,7 @@ ORM-модели SQLAlchemy 2.0 (mapped_column):
 - list_candidates_for_archive(cutoff) — для архивации
 - list_archived_records, mark_archived(file_id, archive_path)
 - update_relative_path_prefix, heal_stale_relative_path
+- list_active_under_prefix(user_id, section, prefix) — COMMITTED + ARCHIVED под директорией (рекурсивное удаление)
 - get_uploaders_by_relative_paths_in_section
 
 **QuotaRepository** — денормализованные квоты с атомарным инкрементом/декрементом
@@ -379,6 +383,14 @@ Singleton через `get_session_store()`. Хранит:
 - `download_directory_as_zip(actor_id, path)` -> AsyncIterator[bytes]
   - Рекурсивный walk -> BytesIO -> ZIP_DEFLATED -> chunk streaming
 
+#### delete_directory_recursive(user_id, path) -> int
+
+Удаляет директорию вместе с блобами, записями `file_records` и квотой, возвращает число
+освобождённых байт. В отличие от `delete_by_path` не оставляет осиротевшие строки за удалённым
+prefix. Забирает записи в статусах `COMMITTED` и `ARCHIVED`
+(`FileRepository.list_active_under_prefix`); для архивных дополнительно удаляет zstd-блоб.
+Используется только секцией `RESUMES` — поведение `/files`, `/shared`, `/private` не менялось.
+
 ### PhotoService
 
 Файл: `backend/app/application/photo_service.py`
@@ -427,6 +439,43 @@ Singleton через `get_session_store()`. Хранит:
   - Trim; пустые имя/значение и дубликаты имён → `KeysValidationError`
   - Пишет весь файл через `FileService.overwrite_file` (`sort_keys=False`, `allow_unicode=True`)
   - Логи: user_id + число ключей, без значений
+
+### ResumeService
+
+Файл: `backend/app/application/resume_service.py`
+
+Дерево вакансий поверх обычного (незашифрованного) `FileService` с секцией `RESUMES`
+и root prefix `users/{user_id}/resumes`. См. [ADR-010](./adr/ADR-010-resumes-yaml-tree-on-s3.md).
+
+Уровни — это реальные директории S3: `{country}/{company}/{vacancy}`. Метаданные — YAML,
+записываемый через `FileService.overwrite_file` (та же техника, что и `Keys/keys.yaml`).
+
+- `list_nodes(user_id, path)` -> ResumeTree
+  - Уровень (`COUNTRY` | `COMPANY` | `VACANCY`) выводится из глубины пути
+  - Возвращает только директории; для вакансий подмешивает `status_id` / `website_url` из `meta.yaml`
+  - Битый `meta.yaml` в листинге не фатален: warning в лог, вакансия отдаётся с `status_id=None`
+- `create_node(user_id, path, name, status_id=None)` -> ResumeNode
+  - Глубже вакансии → `ResumeValidationError(RESUME_DEPTH_INVALID)`
+  - Имя: trim, 1–128 символов, без `/` `\`, не `.`/`..`, не `meta.yaml` / `statuses.yaml`
+  - Дубликат среди соседей (case-insensitive) → `ResumeNodeExistsError`
+  - На уровне вакансии дополнительно пишет `meta.yaml`; `status_id` проверяется по списку статусов
+- `list_all_vacancies(user_id)` -> list[VacancyListItem]
+  - Обход всего дерева: страна → компания → вакансия, плюс чтение `meta.yaml` на вакансию
+  - Порядок: страна, компания, название вакансии (case-insensitive)
+  - Битый `meta.yaml` не ломает список: вакансия отдаётся с `status_id=None`
+- `rename_node(user_id, path, new_name)` -> ResumeNode — через `FileService.rename_by_path`,
+  который переписывает prefix у всех вложенных `file_records`
+- `delete_node(user_id, path)` — через `FileService.delete_directory_recursive`
+- `get_vacancy(user_id, path)` / `save_vacancy(...)` -> VacancyMeta
+  - `website_url` необязателен; непустое значение без схемы сохраняется как `https://<value>`
+  - Имена полей: trim, непустые, уникальные без учёта регистра → `RESUME_FIELD_INVALID`
+  - `status_id` на запись **не** проверяется — так переживает открепление статуса
+  - Битый `meta.yaml` на чтении → `ResumeMetaInvalidError`, файл не перезаписывается
+- `list_statuses(user_id)` / `save_statuses(user_id, statuses)` -> list[ResumeStatus]
+  - Первый GET сидит `statuses.yaml`: Applied `#38BDF8`, Interview `#A78BFA`, Offer `#34D399`, Rejected `#F87171`
+  - `id` — uuid4 hex, генерируется сервером при отсутствии и не меняется при переименовании
+  - Пустое/дублирующееся имя (case-insensitive) или цвет не `#RRGGBB` → `RESUME_STATUS_INVALID`
+  - Удаление статуса не переписывает ни одну вакансию: висячий `status_id` отдаётся как есть
 
 ### AdminService
 
@@ -503,6 +552,26 @@ Endpoints: GET / (status), GET /health
 | GET | /google/session | Session bridge. Consumes ticket, sets cookie. 307 -> /files |
 | POST | /logout | Удаляет cookie. 204 |
 | GET | /me | Текущий пользователь. 200 + UserResponse |
+
+#### ResumeRouter (`/api/resumes`)
+
+Доступ: `check_role(FAMILY, ADMIN)`. STRANGER / BLOCKED → 403 `ACCESS_DENIED`.
+
+| Method | Path | Описание |
+|---|---|---|
+| GET | /tree | Дочерние узлы по `path`. 200 + ResumeTreeResponse |
+| POST | /tree | Создание узла `{path, name, status_id?}`. 201 + ResumeNode |
+| PATCH | /tree | Переименование `{path, new_name}`. 200 + ResumeNode |
+| DELETE | /tree | Рекурсивное удаление (`path` query). 204 |
+| GET | /vacancies | Плоский список всех вакансий дерева. 200 + VacancyListResponse |
+| GET | /vacancy | Метаданные вакансии (`path` query). 200 + VacancyMeta |
+| PUT | /vacancy | Сохранение метаданных. 200 + VacancyMeta |
+| GET | /statuses | Список статусов (сидится при первом чтении). 200 |
+| PUT | /statuses | Замена всего списка статусов. 200 |
+
+Файлы вакансии — `/api/resumes/files/*`, полный контракт FileRouter, секция `RESUMES`.
+Роутер собирается фабрикой `build_file_router` (`routers/file_router_factory.py`), а не третьей
+рукописной копией обработчиков; `/api/files` и `/api/shared` при этом не трогались.
 
 #### FileRouter (`/api/files`)
 
@@ -630,6 +699,7 @@ Unhandled exceptions возвращают 500 INTERNAL_ERROR.
 - backup.py: get_backup_service
 - maintenance.py: get_maintenance_service
 - shared.py: get_shared_file_service
+- resumes.py: get_resumes_file_service, get_resume_service
 
 ### DB Session
 
@@ -656,6 +726,11 @@ bucket {S3_BUCKET_PREFIX}disk1/
     ├── files/
     │   ├── .tmp/{uuid}            ← незакоммиченные загрузки
     │   └── ...
+    ├── resumes/
+    │   ├── statuses.yaml          ← список статусов пользователя
+    │   └── {country}/{company}/{vacancy}/
+    │       ├── meta.yaml          ← website_url, status_id, fields[]
+    │       └── ...                ← вложения вакансии
     └── private/
         ├── .marker                ← encrypt_blob("HOMECLOUD_MARKER_V1", key)
         └── ...                    ← AES-GCM; имена Base64URL

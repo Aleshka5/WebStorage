@@ -54,6 +54,7 @@ Use in-memory / temp FS adapters and fake `SessionStore`.
 | `PhotoService` | Reject non-image; create preview path |
 | `PrivateService` | Unlock stores key; lock removes; reset wipes |
 | `KeysRegistryService` | Bootstrap `Keys/keys.yaml`; PUT/GET round-trip; reject empty/duplicate; invalid YAML not overwritten; one FileRecord on overwrite |
+| `ResumeService` | Seed `statuses.yaml`; depth rules; name validation; duplicate sibling; URL scheme normalisation; field uniqueness; status delete detaches; invalid YAML not overwritten; one FileRecord per `meta.yaml` |
 | `AdminService` | Self role/delete forbidden; block sets inactive |
 | `ArchiveService` | Only idle COMMITTED files archived |
 | `MaintenanceService` | PENDING &gt;1h removed |
@@ -68,6 +69,7 @@ Use in-memory / temp FS adapters and fake `SessionStore`.
 | Photos | upload + list pagination `has_next` |
 | Private | ops without unlock → 401 `PRIVATE_SESSION_EXPIRED`; unlock then download |
 | Keys Registry | GET without unlock → 401 `PRIVATE_SESSION_EXPIRED`; GET creates `Keys/` + empty `keys.yaml`; PUT/GET round-trip; empty/duplicate → 400; invalid YAML → 409 and file unchanged; second GET does not wipe; overwrite does not add a second FileRecord |
+| Resumes | STRANGER 403 on every route; seed then non-destructive second GET; create/rename/delete at each level; duplicate sibling 409 `RESUME_NODE_EXISTS`; invalid/reserved name 400 `RESUME_NAME_INVALID`; depth-4 create 400 `RESUME_DEPTH_INVALID`; vacancy meta round-trip incl. empty and scheme-less URL; empty/duplicate field 400 `RESUME_FIELD_INVALID`; bad status name/colour 400 `RESUME_STATUS_INVALID`; corrupt YAML 409 `RESUME_META_INVALID` with the file unchanged; recursive delete releases records and quota; `/api/resumes/files` upload/list/delete under a vacancy; `GET /vacancies` ordering, empty branches skipped and corrupt meta degraded |
 | Quota | `/api/quota/me` shape |
 | Admin | non-admin 403; **after E-AUTHZ:** `GET /api/admin/users` includes live `role` text; `PATCH .../role` gone; quota/storage still ADMIN-only |
 
@@ -112,9 +114,12 @@ Related: [gateway-user-service](./epics/gateway-user-service/init.md). Fake `Use
 | Component | Cases |
 |---|---|
 | `ProtectedRoute` | Redirect unauthenticated |
-| `Sidebar` | Shared/Admin visibility by role |
+| `Sidebar` | Resumes/Shared/Admin visibility by role |
 | `AdminPage` (E-AUTHZ) | Role column is text, not `<select>`; no `updateUserRole` |
-| `FileManager` | Empty, list, mkdir dialog validation |
+| `FileManager` | Empty, list, mkdir dialog validation; `basePath` scoping (never navigates above the base) and `hiddenNames` filtering; omitting both props changes nothing |
+| Resumes pages | CTA moves from centred-empty to end-of-list; status dot and "No status" fallback; unsaved-changes warning on the leaf |
+| `AllVacanciesPage` | Country/Company/Vacancy cells link to the right routes; status resolved by id; empty state |
+| `VacancyStatusFilter` | Empty selection filters nothing in both modes; Show only vs Hide are complementary; "No status" also matches a dangling `status_id`; filtering everything out shows the clear-filter state |
 | `PrivateUnlockModal` | Submit passphrase; show lockout/reset affordance |
 | `PhotoGrid` / `Lightbox` | Render items; open original |
 
@@ -126,7 +131,8 @@ Mock API modules; do not hit real backend in unit/component tests.
 2. Photo upload → appears in grid → lightbox.
 3. Private unlock → upload → lock/expiry → unlock again.
 3a. Keys Registry unlock → add key → save → reload list; delete in UI → save.
-4. STRANGER cannot open `/shared` or `/admin`.
+3b. Resumes: add country → company → vacancy → set URL, add a field, upload a file → reload shows all of it.
+4. STRANGER cannot open `/resumes`, `/shared` or `/admin`.
 5. FAMILY opens `/shared`.
 6. Admin changes **Auth-Service `storage_roles`** (not HomeCloud `PATCH .../role`); storage UI reflects on next load.
 

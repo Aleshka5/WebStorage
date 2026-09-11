@@ -14,6 +14,9 @@ from app.domain.exceptions import (
     PathTraversalError,
     PrivateSessionExpiredError,
     QuotaExceededError,
+    ResumeMetaInvalidError,
+    ResumeNodeExistsError,
+    ResumeValidationError,
     StorageUnavailableError,
     UserServiceUnavailableError,
 )
@@ -203,6 +206,48 @@ def register_exception_handlers(app: FastAPI) -> None:
             status.HTTP_409_CONFLICT,
             {
                 "error_code": ErrorCode.KEYS_YAML_INVALID,
+                "message": str(exc),
+            },
+        )
+
+    @app.exception_handler(ResumeValidationError)
+    async def resume_validation_handler(
+        _request: Request,
+        exc: ResumeValidationError,
+    ) -> JSONResponse:
+        logger.warning("Resumes validation failed: {}", exc)
+        return _error_response(
+            status.HTTP_400_BAD_REQUEST,
+            {
+                "error_code": exc.error_code,
+                "message": str(exc),
+            },
+        )
+
+    @app.exception_handler(ResumeNodeExistsError)
+    async def resume_node_exists_handler(
+        _request: Request,
+        exc: ResumeNodeExistsError,
+    ) -> JSONResponse:
+        logger.warning("Resumes node already exists: {}", exc)
+        return _error_response(
+            status.HTTP_409_CONFLICT,
+            {
+                "error_code": ErrorCode.RESUME_NODE_EXISTS,
+                "message": str(exc),
+            },
+        )
+
+    @app.exception_handler(ResumeMetaInvalidError)
+    async def resume_meta_invalid_handler(
+        _request: Request,
+        exc: ResumeMetaInvalidError,
+    ) -> JSONResponse:
+        logger.warning("Resumes YAML is invalid: {}", exc)
+        return _error_response(
+            status.HTTP_409_CONFLICT,
+            {
+                "error_code": ErrorCode.RESUME_META_INVALID,
                 "message": str(exc),
             },
         )

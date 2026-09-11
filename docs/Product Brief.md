@@ -24,6 +24,7 @@ Households and small groups need a private place for photos and documents withou
 - Personal **Files** and **Photos** per user.
 - **Private** section with AES-256-GCM encryption driven by a user passphrase (never stored in DB).
 - **Shared** folder for FAMILY and ADMIN.
+- **Resumes** workspace (FAMILY, ADMIN) for tracking job applications by country → company → vacancy, each vacancy holding a link, free-form fields and attached documents.
 - **Admin** panel for roles, private quotas, blocking, and storage health.
 - MinIO object storage (S3 API) with metadata in PostgreSQL and sessions in Redis.
 

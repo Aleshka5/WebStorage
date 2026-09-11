@@ -188,6 +188,77 @@ Private reset (§6) wipes `Keys/keys.yaml` with the rest of the vault.
 
 ---
 
+## 6b. Resumes Flow (`/resumes`)
+
+**Actor:** FAMILY, ADMIN. STRANGER: no sidebar item; direct navigation shows the access-denied state
+(`403 ACCESS_DENIED`). No passphrase — resumes are plain storage. See
+[E-RESUMES](./epics/resumes/init.md).
+
+### Navigation
+
+```
+/resumes                                   countries
+  → /resumes/:country                      companies
+    → /resumes/:country/:company           vacancies (+ status filter, status editor)
+      → /resumes/:country/:company/:vacancy   leaf: url + fields + FileManager
+```
+
+URL segments are encoded names. Breadcrumbs at every level navigate back up. An unknown segment
+renders a "not found" state with a link back to `/resumes`.
+
+### Tree pages (countries / companies / vacancies)
+
+| Element | Behavior |
+|---|---|
+| Primary CTA | "Add new country" / "Add a new company" / "Add a new vacancy" — centred at the top while the list is empty, moved to the end of the list once it has entries |
+| Create dialog | Name field; vacancy dialog also offers a status (may be left unset) |
+| Inline errors | `RESUME_NODE_EXISTS` (duplicate sibling) and `RESUME_NAME_INVALID` appear in the dialog, not only as a toast |
+| Row click | Navigate one level deeper |
+| Rename | Dialog prefilled with the current name → `PATCH /api/resumes/tree` |
+| Delete | Confirm dialog naming the node and its descendant count → recursive hard delete; quota bar refreshes |
+| Empty state | Friendly copy + the primary CTA |
+
+### Vacancy rows and statuses
+
+Each vacancy row shows a coloured dot + status label. An unset or deleted (dangling) `status_id`
+renders as a neutral "No status". Filtering by status lives on the **All vacancies** page, not here
+(D10); this page links to it.
+
+The status editor (from the vacancies page) lists every status with a colour swatch and supports
+add, rename, recolor and delete. Deleting only removes the entry; no vacancy file is rewritten.
+Explicit **Save** → `PUT /api/resumes/statuses`, disabled while pristine. The first
+`GET /api/resumes/statuses` seeds Applied / Interview / Offer / Rejected.
+
+### All vacancies (`/vacancies`)
+
+Плоский cross-tree список: таблица Country / Company / Vacancy / Status, отсортированная по стране,
+компании и названию вакансии. Каждая из первых трёх колонок — ссылка на соответствующую страницу
+дерева; статус рендерится тем же `ResumeStatusBadge`, что и в списке вакансий.
+
+Фильтр по статусу: мультивыбор по всем статусам плюс «No status», два режима — **Show only**
+(белый список) и **Hide** (чёрный список). Пустой выбор ничего не фильтрует в обоих режимах.
+Висячий `status_id` фильтруется как «No status» — так же, как рендерится. Контрол показывает
+«Showing X of Y vacancies»; если под фильтр не попало ничего — пустое состояние с **Clear filter**.
+
+Маршрут верхнего уровня, а не `/resumes/all`: статический дочерний сегмент затенил бы страну с
+именем «all». Вход — кнопка **All vacancies** на странице стран; обратно — **Back to countries**.
+Тот же FAMILY/ADMIN gate. Пустое дерево → «No vacancies yet» + ссылка на `/resumes`.
+
+### Vacancy leaf
+
+| Element | Behavior |
+|---|---|
+| Status selector | Any status, or none |
+| Website URL | Optional. A non-empty value without a scheme is saved as `https://<value>`; renders as an external link when set |
+| Fields | Editable `name: value` list — add, edit, delete, order preserved. Plain text, fully visible, no masking, no encryption (unlike §6a) |
+| Save | `PUT /api/resumes/vacancy?path=`; disabled while pristine; unsaved-changes warning on navigate away |
+| Files | `<FileManager apiPrefix="/api/resumes/files" basePath="{country}/{company}/{vacancy}" hiddenNames={["meta.yaml"]} />` — full §3 behaviour, breadcrumbs rooted at the vacancy, never above it |
+
+Invalid `meta.yaml` on disk → `409 RESUME_META_INVALID`; the page shows the error and the file is not
+overwritten.
+
+---
+
 ## 7. Admin Flow (`/admin`)
 
 **Actor:** ADMIN. Others → redirect `/files`.

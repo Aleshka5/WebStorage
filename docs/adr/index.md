@@ -13,6 +13,7 @@ ADRs capture **irreversible or high-impact** decisions. Template: [adr-template.
 | [ADR-007](./ADR-007-minio-blob-backend.md) | MinIO (S3 API) as the only blob backend | Accepted | 2026-08-11 |
 | [ADR-008](./ADR-008-auth-service-grpc-roles.md) | Auth-Service owns product session + `storage_roles` | Superseded by [ADR-009](./ADR-009-gateway-headers-user-service.md) | 2026-08-19 |
 | [ADR-009](./ADR-009-gateway-headers-user-service.md) | Gateway headers + User-Service + Common | Accepted | 2026-08-29 |
+| [ADR-010](./ADR-010-resumes-yaml-tree-on-s3.md) | Resumes tree as S3 directories + YAML metadata | Accepted | 2026-09-02 |
 
 ## When to add an ADR
 

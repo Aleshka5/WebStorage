@@ -62,6 +62,7 @@ backend/app/
 | `PhotoService` | Photo upload, thumbnails, pagination, delete |
 | `PrivateService` | Unlock/lock/reset; builds encrypted `FileService` |
 | `KeysRegistryService` | Bootstrap/parse/save `Keys/keys.yaml` via unlocked private `FileService` |
+| `ResumeService` | Country/company/vacancy tree, `meta.yaml` and `statuses.yaml` via a `RESUMES`-scoped `FileService` ([ADR-010](./adr/ADR-010-resumes-yaml-tree-on-s3.md)) |
 | `AdminService` | Users, roles, private quotas, block, delete, disk stats |
 | `ArchiveService` | Idle-file zstd archive + stats |
 | `BackupService` | `pg_dump` + zstd + retention |
@@ -82,8 +83,9 @@ backend/app/
 
 ### Presentation
 
-- Routers: `auth`, `files`, `shared`, `photos`, `private`, `quota`, `admin`.
-- Cookie auth dependency; role checks for shared/admin.
+- Routers: `auth`, `files`, `shared`, `photos`, `private`, `quota`, `resumes` (+ `resumes/files`), `admin`.
+- The `/api/resumes/files` endpoints are built from the same file-handler set as `/api/files` rather than hand-copied, and are scoped to `FileSection.RESUMES`.
+- Cookie auth dependency; role checks for shared/resumes/admin.
 - Global exception handlers → structured `error_code`.
 - Rate-limit middleware on sensitive auth routes.
 
@@ -93,13 +95,13 @@ backend/app/
 
 ```
 frontend/src/
-├── pages/            # Auth, Photos, Files, Private, Keys Registry, Shared, Admin
+├── pages/            # Auth, Photos, Files, Private, Keys Registry, Resumes, All Vacancies, Shared, Admin
 ├── components/
 │   ├── Layout/       # AppLayout, Header, Sidebar, StorageUsageBar
 │   ├── FileManager/  # Reusable manager (plain | encrypted)
 │   ├── PhotoGrid/    # Grid, Lightbox, FAB
 │   └── ui/           # Button, Input, Modal, ErrorMessage
-├── services/         # Axios clients (files, photos, private, admin, api)
+├── services/         # Axios clients (files, photos, private, keys, resumes, admin, api)
 ├── store/            # Zustand: auth, quota
 ├── hooks/            # upload, infinite scroll, private session
 └── router.tsx        # Guards + bootstrap fetchMe
@@ -109,8 +111,12 @@ frontend/src/
 
 ```ts
 mode: "plain" | "encrypted"
-apiPrefix: "/api/files" | "/api/private" | "/api/shared"
+apiPrefix: "/api/files" | "/api/private" | "/api/shared" | "/api/resumes/files"
+basePath?: string        // prefix every API path; breadcrumbs root here (resumes vacancy folder)
+hiddenNames?: string[]   // entries filtered from the listing (e.g. meta.yaml)
 ```
+
+`basePath` and `hiddenNames` are optional; omitting both preserves the pre-Resumes behaviour exactly.
 
 Auth: `withCredentials: true`; JWT never stored in localStorage. Private expiry: axios interceptor detects `PRIVATE_SESSION_EXPIRED` and emits event for unlock modal.
 

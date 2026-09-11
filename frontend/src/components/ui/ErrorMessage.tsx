@@ -25,6 +25,15 @@ const ERROR_MESSAGES: Record<string, string> = {
   KEY_NAME_DUPLICATE: "A key with this name already exists",
   KEYS_YAML_INVALID:
     "keys.yaml is invalid. Fix or replace it in Private files before using Keys Registry",
+  RESUME_NAME_INVALID:
+    "Invalid name. Use 1 to 128 characters without / or \\, and avoid reserved names",
+  RESUME_DEPTH_INVALID:
+    "This level does not accept new entries. Create folders inside a vacancy from its file list",
+  RESUME_STATUS_INVALID: "Status names must be unique and non-empty, and colours must be #RRGGBB",
+  RESUME_FIELD_INVALID: "Field names must be unique and non-empty",
+  RESUME_NODE_EXISTS: "An entry with this name already exists here",
+  RESUME_META_INVALID:
+    "The stored resume metadata is invalid. Fix or replace the YAML file before continuing",
 };
 
 function applyPlaceholders(template: string, options?: ErrorMessageOptions): string {

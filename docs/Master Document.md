@@ -43,7 +43,7 @@ HomeCloud is a Docker-deployable home cloud that gives a family (and invited str
 | Data | PostgreSQL 16 (metadata), MinIO (blobs, S3 API), Redis (sessions/cache) |
 | Auth | Email/password + Google OAuth; JWT in httpOnly cookie. **Planned (E-AUTHZ):** Google via Auth-Service; cookie `auth_session`; roles from gRPC `storage_roles`. |
 | Roles | `STRANGER`, `FAMILY`, `ADMIN` |
-| Sections | Photos, Files, Private (encrypted), Shared, Admin |
+| Sections | Photos, Files, Private (encrypted), Keys Registry, Resumes, Shared, Admin |
 | Deploy | Docker Compose; optional Kubernetes |
 
 ---
@@ -55,6 +55,7 @@ HomeCloud is a Docker-deployable home cloud that gives a family (and invited str
 | Register / login / OAuth | ✅ | ✅ | ✅ |
 | Own photos / files / private | ✅ | ✅ | ✅ |
 | Shared folder | ❌ | ✅ | ✅ |
+| Resumes (job applications) | ❌ | ✅ | ✅ |
 | Admin panel | ❌ | ❌ | ✅ |
 | Change roles / private quotas | ❌ | ❌ | ✅ (roles: Auth-Service after E-AUTHZ; private quota stays HomeCloud) |
 
@@ -72,10 +73,12 @@ HomeCloud is a Docker-deployable home cloud that gives a family (and invited str
 | `/photos` | All authenticated | `/api/photos` |
 | `/files` | All authenticated | `/api/files` |
 | `/private` | All authenticated (+ unlock) | `/api/private` |
+| `/resumes` | FAMILY, ADMIN | `/api/resumes` |
+| `/vacancies` | FAMILY, ADMIN | `/api/resumes/vacancies` |
 | `/shared` | FAMILY, ADMIN | `/api/shared` |
 | `/admin` | ADMIN | `/api/admin` |
 
-Sidebar shows Shared only for FAMILY/ADMIN and Admin only for ADMIN. Quota bar lives in expanded sidebar (`GET /api/quota/me`).
+Sidebar shows Resumes and Shared only for FAMILY/ADMIN, and Admin only for ADMIN. Quota bar lives in expanded sidebar (`GET /api/quota/me`).
 
 ---
 
@@ -100,6 +103,7 @@ Object keys keep the logical tree (no app bind-mount of `/storage`):
 users/{user_id}/
 ├── photos/{originals,previews}/
 ├── files/
+├── resumes/          ← country/company/vacancy dirs + meta.yaml, statuses.yaml (plain)
 └── private/          ← AES-256-GCM; .marker for key validation
 shared/
 _meta/backups/        ← DB dumps (first disk bucket)
