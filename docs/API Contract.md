@@ -36,6 +36,8 @@ Related: [Data Models.md](./Data%20Models.md), [Design Spec.md](./Design%20Spec.
 | `KEYS_YAML_INVALID` | 409 (existing `keys.yaml` is not a flat string map; GET does not overwrite) |
 | `RESUME_NAME_INVALID` / `RESUME_DEPTH_INVALID` / `RESUME_STATUS_INVALID` / `RESUME_FIELD_INVALID` | 400 |
 | `RESUME_NODE_EXISTS` / `RESUME_META_INVALID` | 409 |
+| `GENERATED_INVALID` | 400 (bad or missing prompt, result, or numeric field; more than 10 references; run id could not be allocated) |
+| `GENERATED_META_INVALID` | 409 (stored `meta.yaml` is missing or not the expected shape; the read does not overwrite it) |
 | `TOO_MANY_ATTEMPTS` | 429 (+ optional `retry_after`) |
 | `DISK_UNAVAILABLE` | 503 |
 | `USER_SERVICE_UNAVAILABLE` | 503 (User-Service down/timeout/failed role lookup; **E-GWUS**) |
@@ -337,6 +339,133 @@ Same request/response contract as [§4 Files](#4--files--apifiles-authenticated)
 
 ---
 
+## 9a. Generated Images — `/api/generated` (authenticated)
+
+Archive of one user’s image runs. This service does not call the image generator and does not join `qwen_image_gen_network`. There is no generate form in the Storage UI. Create is only `POST /api/generated`. See [E-GENERATED](./epics/generated-images/init.md).
+
+Objects live under `users/{user_id}/generated` with `FileSection.GENERATED` (Alembic `007`). They are plain bytes (`is_encrypted` is false) and are absent from `/api/files`, `/api/photos`, `/api/private`, and `/api/shared`. The `FileService` root is the caller’s prefix, so a run that belongs to someone else is `404 FILE_NOT_FOUND`. A run whose hot objects were replaced by `*.zst` still lists, opens, and streams.
+
+Auth is [§3](#3-auth--apiauth): `X-User-Id`, otherwise `X-Auth-User-Id`. The generator sends `X-Auth-User-Id` (required UUID) and may send `X-Auth-Email`. It does not send a cookie. `STRANGER`, `FAMILY`, and `ADMIN` may store and read runs. `BLOCKED` → `403 ACCESS_DENIED`. Missing or non-UUID user id → `401 UNAUTHORIZED`. User-Service down while resolving the role → `503 USER_SERVICE_UNAVAILABLE`. No write disk → `503 DISK_UNAVAILABLE`.
+
+Quota is the user’s total `limit_bytes`. `meta.yaml`, every reference, and `result.png` count toward `total_bytes` only (not `photos_bytes` or `private_bytes`). If they do not fit, `413 QUOTA_EXCEEDED` and no directory is created.
+
+A run id is UTC `YYYYmmddTHHMMSSZ`, a hyphen, and 8 hex characters (`20260927T115012Z-3b47ec64`).
+
+### `POST /api/generated`
+
+`multipart/form-data`. The directory is created only after validation and the quota check succeed. A failed write deletes the partial directory. Nothing is stored on `400` or `413`.
+
+| Part | Rule |
+|---|---|
+| `prompt` | Required. Blank or whitespace-only → `400` |
+| `negative_prompt` | Optional. Omitted is stored as `""` |
+| `seed`, `steps`, `width`, `height` | Required integers. A whole number written as `40.0` is accepted; a fractional value is not |
+| `true_cfg_scale`, `duration` | Required finite numbers |
+| `images` | Zero or more reference files, in order, at most 10. A part with no filename and an empty body is skipped |
+| `result` | Required. Stored as `result.png` regardless of the uploaded filename |
+
+References are stored as `ref-1.png`, `ref-2.png`, … in the order of the `images` parts. `meta.yaml` quotes every string.
+
+`201`:
+
+```json
+{"id": "20260927T115012Z-3b47ec64", "created_at": "2026-09-27T11:50:12Z"}
+```
+
+`created_at` is UTC `YYYY-MM-DDTHH:MM:SSZ` (seconds, no fraction).
+
+```text
+users/{user_id}/generated/{id}/
+  meta.yaml
+  result.png
+  ref-1.png
+```
+
+Five collisions while allocating the id → `400 GENERATED_INVALID` and no directory.
+
+### `GET /api/generated`
+
+The caller’s runs, newest `created_at` first.
+
+```json
+{
+  "items": [
+    {
+      "id": "20260927T115012Z-3b47ec64",
+      "created_at": "2026-09-27T11:50:12Z",
+      "prompt": "A cinematic portrait of the person, soft rim light, 85mm lens"
+    }
+  ]
+}
+```
+
+A directory is skipped when its name starts with `.`, its name is not a run id, or `meta.yaml` is missing or not the shape below. The rest of the list still returns `200`.
+
+### `GET /api/generated/{id}`
+
+```json
+{
+  "prompt": "A cinematic portrait of the person, soft rim light, 85mm lens",
+  "negative_prompt": "",
+  "seed": 1823486689,
+  "steps": 40,
+  "true_cfg_scale": 1.0,
+  "width": 2048,
+  "height": 2048,
+  "duration": 96.4,
+  "references": [
+    "/api/generated/20260927T115012Z-3b47ec64/files/ref-1.png"
+  ],
+  "result": "/api/generated/20260927T115012Z-3b47ec64/files/result.png"
+}
+```
+
+The body has no `id` and no `created_at`. `references` keeps `meta.yaml` order. URLs are on this origin.
+
+Unknown or malformed id → `404 FILE_NOT_FOUND`. Missing or ill-shaped `meta.yaml` → `409 GENERATED_META_INVALID`. The file is left as it is.
+
+### `GET /api/generated/{id}/files/{name}`
+
+Streams `result.png` or a `ref-N.png` that readable `meta.yaml` lists. `Content-Type` is `image/png`. `Content-Disposition` is `inline`. Any other name, including `meta.yaml` and a file that exists but is not listed, is `404 FILE_NOT_FOUND`. Unreadable `meta.yaml` on this route is `404`, because there is no list of allowed names.
+
+### `DELETE /api/generated/{id}`
+
+`204`. Removes the directory, its `file_records` (including `ARCHIVED`), and the bytes from the total quota. Unknown, malformed, or already deleted id → `404 FILE_NOT_FOUND`. Does not call the image generator.
+
+### Error codes
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `GENERATED_INVALID` | 400 | Bad or missing prompt, result, or numeric field; more than 10 references; or a run id could not be allocated. No directory |
+| `GENERATED_META_INVALID` | 409 | `GET /api/generated/{id}`: `meta.yaml` is missing or not the expected shape. The file is not rewritten |
+| `QUOTA_EXCEEDED` | 413 | The run does not fit `limit_bytes`. No directory |
+| `FILE_NOT_FOUND` | 404 | Unknown run, another user’s run, or a file that is not listed in `meta.yaml` |
+| `ACCESS_DENIED` | 403 | Storage role `BLOCKED` |
+| `UNAUTHORIZED` | 401 | Missing or non-UUID user id |
+| `USER_SERVICE_UNAVAILABLE` | 503 | User-Service down while resolving the storage role |
+| `DISK_UNAVAILABLE` | 503 | No disk to write the caller’s generated prefix |
+
+### `meta.yaml`
+
+```yaml
+prompt: "A cinematic portrait of the person, soft rim light, 85mm lens"
+negative_prompt: ""
+seed: 1823486689
+steps: 40
+true_cfg_scale: 1.0
+width: 2048
+height: 2048
+duration: 96.4
+created_at: "2026-09-27T11:50:12Z"
+references:
+  - "ref-1.png"
+result: "result.png"
+```
+
+`prompt` is a non-empty string. `negative_prompt` is a string. `created_at` matches `YYYY-MM-DDTHH:MM:SSZ`. `references` is a list of unique `ref-N.png` names (`N` has no leading zero). `result` is exactly `result.png`. `seed`, `steps`, `width`, and `height` are integers. `true_cfg_scale` and `duration` are finite numbers.
+
+---
+
 ## 10. Admin — `/api/admin` (ADMIN only)
 
 ### Users
@@ -375,6 +504,7 @@ Errors: self delete → `403`; missing user → `404 USER_NOT_FOUND`. Role colum
 | `services/api.ts` | Axios instance, credentials, private-session interceptor |
 | `filesApi.ts` | Files + shared (via prefix) |
 | `photosApi.ts` | Photos |
+| `generatedApi.ts` | Generated Images list, one run, and delete (no create) |
 | `privateApi.ts` | Unlock/session/quota/reset (+ file ops via FileManager) |
 | `adminApi.ts` | Users + storage |
 | `resumesApi.ts` | Resumes tree, vacancy metadata, statuses (+ file ops via FileManager) |

@@ -23,6 +23,7 @@ from app.presentation.dependencies.archive_providers import (
 from app.presentation.routers.admin_router import router as admin_router
 from app.presentation.routers.auth_router import router as auth_router
 from app.presentation.routers.file_router import router as file_router, shared_router
+from app.presentation.routers.generated_router import router as generated_router
 from app.presentation.routers.photo_router import router as photo_router
 from app.presentation.routers.private_router import router as private_router
 from app.presentation.routers.quota_router import router as quota_router
@@ -200,6 +201,7 @@ app.include_router(photo_router)
 app.include_router(private_router)
 app.include_router(resume_router)
 app.include_router(resume_files_router)
+app.include_router(generated_router)
 
 
 @app.get("/health")

@@ -24,6 +24,10 @@ def user_resumes_root_prefix(user_id: UUID) -> str:
     return f"users/{user_id}/resumes"
 
 
+def user_generated_root_prefix(user_id: UUID) -> str:
+    return f"users/{user_id}/generated"
+
+
 def shared_root_prefix() -> str:
     return "shared"
 

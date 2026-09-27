@@ -8,6 +8,8 @@ import { ErrorMessage } from "./components/ui/ErrorMessage";
 import AdminPage from "./pages/AdminPage";
 import AllVacanciesPage from "./pages/AllVacanciesPage";
 import FilesPage from "./pages/FilesPage";
+import GeneratedImagePage from "./pages/GeneratedImagePage";
+import GeneratedImagesPage from "./pages/GeneratedImagesPage";
 import PhotosPage from "./pages/PhotosPage";
 import KeysRegistryPage from "./pages/KeysRegistryPage";
 import PrivatePage from "./pages/PrivatePage";
@@ -71,6 +73,8 @@ const router = createBrowserRouter([
     children: [
       { path: "/files", element: <FilesPage /> },
       { path: "/photos", element: <PhotosPage /> },
+      { path: "/generated", element: <GeneratedImagesPage /> },
+      { path: "/generated/:id", element: <GeneratedImagePage /> },
       { path: "/private", element: <PrivatePage /> },
       { path: "/keys", element: <KeysRegistryPage /> },
       {

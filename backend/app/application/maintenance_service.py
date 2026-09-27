@@ -199,6 +199,10 @@ class MaintenanceService:
                 return f"users/{user_id}/private"
             case FileSection.SHARED:
                 return "shared"
+            case FileSection.RESUMES:
+                return f"users/{user_id}/resumes"
+            case FileSection.GENERATED:
+                return f"users/{user_id}/generated"
 
     @classmethod
     def _update_stats(

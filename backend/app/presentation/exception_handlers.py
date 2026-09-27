@@ -9,6 +9,8 @@ from app.domain.exceptions import (
     AuthMisconfiguredError,
     AuthUnauthenticatedError,
     FileNotFoundError,
+    GeneratedMetaInvalidError,
+    GeneratedValidationError,
     KeysValidationError,
     KeysYamlInvalidError,
     PathTraversalError,
@@ -248,6 +250,34 @@ def register_exception_handlers(app: FastAPI) -> None:
             status.HTTP_409_CONFLICT,
             {
                 "error_code": ErrorCode.RESUME_META_INVALID,
+                "message": str(exc),
+            },
+        )
+
+    @app.exception_handler(GeneratedValidationError)
+    async def generated_validation_handler(
+        _request: Request,
+        exc: GeneratedValidationError,
+    ) -> JSONResponse:
+        logger.warning("Generated run validation failed: {}", exc)
+        return _error_response(
+            status.HTTP_400_BAD_REQUEST,
+            {
+                "error_code": exc.error_code,
+                "message": str(exc),
+            },
+        )
+
+    @app.exception_handler(GeneratedMetaInvalidError)
+    async def generated_meta_invalid_handler(
+        _request: Request,
+        exc: GeneratedMetaInvalidError,
+    ) -> JSONResponse:
+        logger.warning("Generated meta.yaml is invalid: {}", exc)
+        return _error_response(
+            status.HTTP_409_CONFLICT,
+            {
+                "error_code": ErrorCode.GENERATED_META_INVALID,
                 "message": str(exc),
             },
         )

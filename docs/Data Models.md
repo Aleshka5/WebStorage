@@ -34,9 +34,11 @@ Request-time **storage** role from `X-Storage-Role` or User-Service. Not stored 
 
 ### FileSection
 
-`PHOTOS` | `FILES` | `PRIVATE` | `SHARED` | `RESUMES`
+`PHOTOS` | `FILES` | `PRIVATE` | `SHARED` | `RESUMES` | `GENERATED`
 
 `RESUMES` (Alembic `006`) scopes the job-application workspace at `users/{user_id}/resumes`. Plain, never encrypted; counts toward the total quota only. See [E-RESUMES](./epics/resumes/init.md).
+
+`GENERATED` (Alembic `007`) scopes image runs at `users/{user_id}/generated`. Plain, never encrypted; `meta.yaml`, references, and `result.png` count toward the total quota only (not `photos_bytes` or `private_bytes`). Runs are absent from `/files`, `/photos`, `/private`, and `/shared`. See [E-GENERATED](./epics/generated-images/init.md).
 
 ### FileStatus
 
@@ -51,7 +53,7 @@ Stale `PENDING` older than 1 hour → maintenance cleanup.
 
 ### ErrorCode
 
-`QUOTA_EXCEEDED`, `UNSUPPORTED_FORMAT`, `PRIVATE_SESSION_EXPIRED`, `DISK_UNAVAILABLE`, `PATH_TRAVERSAL_DETECTED`, `FILE_NOT_FOUND`, `ACCESS_DENIED`, `TOO_MANY_ATTEMPTS`, `EMAIL_ALREADY_EXISTS`, `INVALID_CREDENTIALS`, `UNAUTHORIZED`, `USER_NOT_FOUND`, `INTERNAL_ERROR`, `RESUME_NAME_INVALID`, `RESUME_DEPTH_INVALID`, `RESUME_STATUS_INVALID`, `RESUME_FIELD_INVALID`, `RESUME_NODE_EXISTS`, `RESUME_META_INVALID` (+ router-local `NOT_IMPLEMENTED`).
+`QUOTA_EXCEEDED`, `UNSUPPORTED_FORMAT`, `PRIVATE_SESSION_EXPIRED`, `DISK_UNAVAILABLE`, `PATH_TRAVERSAL_DETECTED`, `FILE_NOT_FOUND`, `ACCESS_DENIED`, `TOO_MANY_ATTEMPTS`, `EMAIL_ALREADY_EXISTS`, `INVALID_CREDENTIALS`, `UNAUTHORIZED`, `USER_NOT_FOUND`, `INTERNAL_ERROR`, `RESUME_NAME_INVALID`, `RESUME_DEPTH_INVALID`, `RESUME_STATUS_INVALID`, `RESUME_FIELD_INVALID`, `RESUME_NODE_EXISTS`, `RESUME_META_INVALID`, `GENERATED_INVALID`, `GENERATED_META_INVALID` (+ router-local `NOT_IMPLEMENTED`).
 
 ### Disk health (admin)
 
@@ -170,6 +172,7 @@ All keys live in the single MinIO bucket `storage`. Paths are POSIX-style object
 | Resume vacancy meta | `users/{user_id}/resumes/{country}/{company}/{vacancy}/meta.yaml` (`FileRecord`, section `RESUMES`) |
 | Resume statuses | `users/{user_id}/resumes/statuses.yaml` (`FileRecord`, section `RESUMES`) |
 | Resume attachments | `users/{user_id}/resumes/{country}/{company}/{vacancy}/{relative}` |
+| Generated run | `users/{user_id}/generated/{id}/` (`meta.yaml`, `result.png`, `ref-N.png`; `FileRecord`, section `GENERATED`) |
 | Shared | `shared/{relative}` |
 | DB backups | `_meta/backups/db_backup_*.sql.zst` (bucket `storage`) |
 | Archive / thumbnail staging | process `/tmp` only; persisted via `StorageAdapter` |
@@ -200,10 +203,13 @@ Identity does not come from this cookie. Logout is not implemented here; hub log
 | `VacancyMeta` | `path`, `name`, `website_url`, `status_id \| null`, `fields: [{ name, value }]` |
 | `ResumeStatus` | `id` (uuid4 hex), `name`, `color` (`#RRGGBB`) |
 | `VacancyListItem` | `country`, `company`, `name`, `path`, `status_id \| null`, `website_url`, `modified_at` |
+| `GeneratedCreated` | `id`, `created_at` |
+| `GeneratedListItem` | `id`, `created_at`, `prompt` |
+| `GeneratedRun` | `prompt`, `negative_prompt`, `seed`, `steps`, `true_cfg_scale`, `width`, `height`, `duration`, `references` (file URLs), `result` (file URL). No `id` or `created_at` |
 | `DiskStat` | id, bucket, total/used/free bytes, status |
 | `UserAdminView` | identity + role + activity + usage/limits |
 
-Frontend mirrors: `types/files.ts`, `types/photos.ts`, `types/resumes.ts`, auth store `User`.
+Frontend mirrors: `types/files.ts`, `types/photos.ts`, `types/resumes.ts`, `types/generated.ts`, auth store `User`. The detail page fills `id` from the route and, when the GET body omits `created_at`, from the UTC stamp in the run id.
 
 ### Resume YAML documents
 
@@ -232,6 +238,31 @@ fields:
 `status_id` has no referential integrity by design: deleting a status leaves the id dangling and the
 vacancy renders as "No status" (ADR-010).
 
+### Generated run YAML
+
+Not a database row. One directory per run, written through `FileService` with section `GENERATED`.
+`{id}` is UTC `YYYYmmddTHHMMSSZ` plus `-` and 8 hex characters. Every string in `meta.yaml` is quoted.
+
+```yaml
+prompt: "A cinematic portrait of the person, soft rim light, 85mm lens"
+negative_prompt: ""
+seed: 1823486689
+steps: 40
+true_cfg_scale: 1.0
+width: 2048
+height: 2048
+duration: 96.4
+created_at: "2026-09-27T11:50:12Z"
+references:
+  - "ref-1.png"
+result: "result.png"
+```
+
+`created_at` is `YYYY-MM-DDTHH:MM:SSZ`. `references` lists unique `ref-N.png` names in upload order.
+`result` is `result.png`. A directory whose `meta.yaml` is missing or not this shape is omitted from
+the list. `GET /api/generated/{id}` of that id is `409 GENERATED_META_INVALID` and does not rewrite
+the file. Delete removes the objects, `file_records` (including `ARCHIVED`), and the total-quota bytes.
+
 ---
 
 ## 8. Invariants
@@ -254,5 +285,7 @@ Alembic under `backend/alembic/versions/`:
 - `003_add_private_limit_bytes`
 - `004_add_user_limit_bytes` — per-user total cap (default 100 MiB)
 - `005_drop_users_role_and_legacy_auth` — drop `users.role`, `password_hash`, `google_id`
+- `006_add_resumes_file_section` — `file_section` value `RESUMES`
+- `007_add_generated_file_section` — `file_section` value `GENERATED` (`ALTER TYPE ... ADD VALUE` outside a transaction; downgrade is a no-op)
 
 Entrypoint runs `alembic upgrade head` on container start.

@@ -10,6 +10,7 @@ class FileSection(StrEnum):
     PRIVATE = "PRIVATE"
     SHARED = "SHARED"
     RESUMES = "RESUMES"
+    GENERATED = "GENERATED"
 
 
 class FileStatus(StrEnum):

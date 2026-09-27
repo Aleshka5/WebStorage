@@ -250,6 +250,24 @@ class FileService:
     async def path_exists(self, path: str) -> bool:
         return await self._adapter.exists(self._normalize_path(path))
 
+    async def readable_object_exists(self, actor_id: UUID, path: str) -> bool:
+        """True when the hot object exists or an archived record can be decompressed.
+
+        ``path_exists`` only sees the hot key. After the daily archive job that key
+        is gone and the bytes live in ``*.zst``, which ``read_by_path`` still opens.
+        """
+        normalized = self._normalize_path(path)
+        record = await self._get_record_by_section_path(actor_id, normalized, self._section)
+        if record is not None and record.is_archived and record.archive_path:
+            logger.info(
+                "Archived object {} is readable for user {} at path {}",
+                record.id,
+                actor_id,
+                normalized,
+            )
+            return True
+        return await self._adapter.exists(normalized)
+
     async def _ensure_overwrite_quota(
         self,
         user_id: UUID,

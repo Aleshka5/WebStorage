@@ -99,3 +99,15 @@ class ResumeNodeExistsError(Exception):
 
 class ResumeMetaInvalidError(Exception):
     """Raised when meta.yaml or statuses.yaml is not valid YAML of the expected shape."""
+
+
+class GeneratedValidationError(Exception):
+    """Raised when a generated-run payload fails validation before anything is stored."""
+
+    def __init__(self, message: str, *, error_code: ErrorCode) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
+class GeneratedMetaInvalidError(Exception):
+    """Raised when a generated run's meta.yaml is missing or not the expected shape."""

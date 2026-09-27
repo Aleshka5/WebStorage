@@ -34,6 +34,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   RESUME_NODE_EXISTS: "An entry with this name already exists here",
   RESUME_META_INVALID:
     "The stored resume metadata is invalid. Fix or replace the YAML file before continuing",
+  GENERATED_META_INVALID: "This generated image could not be read",
 };
 
 function applyPlaceholders(template: string, options?: ErrorMessageOptions): string {

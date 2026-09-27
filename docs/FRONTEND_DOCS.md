@@ -33,6 +33,7 @@ frontend/
 │   │   ├── Layout/                 ← AppLayout, Header, Sidebar, StorageUsageBar
 │   │   ├── Resumes/                ← ResumeTreeSection, ResumeStatusEditor, ResumeStatusBadge,
 │   │   │                             ResumeBreadcrumbs, ResumesGuard
+│   │   ├── Generated/              ← DeleteGeneratedDialog
 │   │   ├── FileManager/            ← FileManager, FileList, FileItem, DropZone, CreateFolderDialog
 │   │   ├── PhotoGrid/              ← PhotoGrid, PhotoItem, Lightbox, PhotoUploadFab
 │   │   ├── ui/                     ← Button, Input, Modal, ErrorMessage
@@ -40,6 +41,8 @@ frontend/
 │   │   └── ProtectedRoute.tsx      ← обёртка для защищённых маршрутов
 │   ├── pages/
 │   │   ├── PhotosPage.tsx          ← сетка фото + lightbox
+│   │   ├── GeneratedImagesPage.tsx ← список прогонов
+│   │   ├── GeneratedImagePage.tsx  ← один прогон: prompt, references, result
 │   │   ├── FilesPage.tsx           ← файловый менеджер (plain)
 │   │   ├── PrivatePage.tsx         ← приватный раздел (encrypted)
 │   │   ├── KeysRegistryPage.tsx    ← реестр ключей (тот же private vault)
@@ -54,6 +57,7 @@ frontend/
 │   │   ├── api.ts                  ← axios instance + interceptor
 │   │   ├── filesApi.ts             ← CRUD файлов
 │   │   ├── photosApi.ts            ← операции с фото
+│   │   ├── generatedApi.ts         ← список / один прогон / удаление (без create)
 │   │   ├── privateApi.ts           ← unlock / lock / quota
 │   │   ├── keysApi.ts              ← GET/PUT /api/private/keys
 │   │   └── adminApi.ts             ← пользователи, диски, архивы
@@ -62,9 +66,11 @@ frontend/
 │   │   └── quota.ts                ← quota state (used_bytes, limit_bytes)
 │   ├── types/
 │   │   ├── files.ts                ← FileNode, FileManagerMode, SortField
-│   │   └── photos.ts               ← PhotoItem, PhotoListResponse
+│   │   ├── photos.ts               ← PhotoItem, PhotoListResponse
+│   │   └── generated.ts            ← GeneratedListItem, GeneratedRun
 │   └── utils/
 │       ├── format.ts               ← formatBytes, formatDateTime
+│       ├── generated.ts            ← formatGeneratedMetaLine, referenceLabel
 │       ├── validation.ts           ← validateEmail, validatePasswordMatch, validateFileName
 │       ├── photoUpload.ts          ← normalizePhotoFiles
 │       ├── id.ts                   ← generateId
@@ -93,6 +99,8 @@ frontend/
 | `/auth` | Сразу login URL хаба (авторизованный → `/files`) | no | — |
 | `/files` | FilesPage (`FileManager mode=plain`) | yes | all |
 | `/photos` | PhotosPage | yes | all |
+| `/generated` | GeneratedImagesPage | yes | all except `BLOCKED` (sidebar) |
+| `/generated/:id` | GeneratedImagePage | yes | all except `BLOCKED` (sidebar) |
 | `/private` | PrivatePage (`FileManager mode=encrypted`) | yes | all |
 | `/keys` | KeysRegistryPage (same private unlock as `/private`) | yes | all |
 | `/resumes` | ResumesPage — страны | yes | FAMILY, ADMIN |
@@ -222,6 +230,18 @@ deletePhoto(id) -> Promise<void>
 downloadPhotoOriginal(originalUrl, filename) -> void
 ```
 
+### generatedApi.ts
+
+```typescript
+listGenerated() -> Promise<{ items: GeneratedListItem[] }>
+getGenerated(id) -> Promise<GeneratedRun>
+deleteGenerated(id) -> Promise<void>
+```
+
+Типы — `src/types/generated.ts`. Create в этом клиенте нет: запись делает только `POST /api/generated` (генератор, не эта страница).
+
+`GET /api/generated/{id}` не отдаёт `id` и `created_at`. `getGenerated` берёт `id` из аргумента и, если `created_at` нет, из UTC-метки в начале id (`YYYYmmddTHHMMSSZ`). Ссылки на файлы, которые уже начинаются с `/` или `http(s)://`, остаются как есть; относительное имя собирается в `/api/generated/{id}/files/{name}`.
+
 ### privateApi.ts
 
 ```typescript
@@ -297,6 +317,7 @@ CSS Grid/Flex: `h-screen`, `bg-zinc-950`. Outlet рендерит дочерни
 | Иконка | Label | Path | Видимость |
 |---|---|---|---|
 | Camera | Фото | /photos | all |
+| Sparkles | Generated Images | /generated | all, кроме `BLOCKED` |
 | Folder | Файлы | /files | all |
 | Lock | Приватное | /private | all |
 | Key | Keys Registry | /keys | all |
@@ -541,6 +562,26 @@ NOT_IMPLEMENTED: "Функция пока недоступна"
 - Upload via FAB with progress tracking
 - Batch delete: Promise.all(deletePhoto(ids))
 
+#### GeneratedImagesPage
+
+Файл: `src/pages/GeneratedImagesPage.tsx`
+
+- Заголовок “Generated Images”. Кнопки **New** и формы промпта нет.
+- `GET /api/generated`. Пустое состояние: “No generated images yet.”
+- Строка ведёт на `/generated/:id`. Заголовок — локальные дата и время (`formatDateTime`, en-US). Под ним промпт в одну строку (`truncate`).
+- Удаление — `DeleteGeneratedDialog` (“Delete generated image?”; в тексте дата и время строки). После `204` строка убирается из списка без повторного `GET`, затем `fetchQuota()`.
+
+#### GeneratedImagePage
+
+Файл: `src/pages/GeneratedImagePage.tsx`
+
+- Полный prompt. Negative prompt только если после trim он непустой.
+- References по порядку, подписи `image 1`, `image 2`, … (`referenceLabel`).
+- Result — `<img>` по URL ответа. Под ним строка `{width}×{height} · {steps} steps · CFG {true_cfg_scale} · seed {seed} · {duration}s`.
+- `404` — “This generated image does not exist.” и ссылка “Back to Generated Images”.
+- `409 GENERATED_META_INVALID` — “This generated image could not be read.” Файл не переписывается.
+- Тот же диалог удаления. После `204` квота обновляется и выполняется переход на `/generated`.
+
 #### FilesPage
 
 Файл: `src/pages/FilesPage.tsx`
@@ -697,7 +738,19 @@ formatBytes(bytes: number, isDirectory: boolean): string
 // isDirectory -> "—", bytes -> "X B/KB/MB/GB/TB"
 
 formatDateTime(iso: string): string
-// toLocaleString("ru-RU", {day:2, month:2, year:"numeric", hour:"2-digit", minute:"2-digit"})
+// toLocaleString("en-US", {day:2, month:2, year:"numeric", hour:"2-digit", minute:"2-digit"})
+```
+
+### generated.ts
+
+Файл: `src/utils/generated.ts`
+
+```typescript
+formatGeneratedMetaLine(run): string
+// "{width}×{height} · {steps} steps · CFG {true_cfg_scale} · seed {seed} · {duration}s"
+
+referenceLabel(index): string
+// "image 1" for index 0
 ```
 
 ### validation.ts

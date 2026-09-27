@@ -94,7 +94,7 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 - `can_access_shared()` -> FAMILY, ADMIN
 - `can_access_admin()` -> только ADMIN
 
-**FileSection** (`StrEnum`): `PHOTOS`, `FILES`, `PRIVATE`, `SHARED`, `RESUMES` (Alembic `006`)
+**FileSection** (`StrEnum`): `PHOTOS`, `FILES`, `PRIVATE`, `SHARED`, `RESUMES` (Alembic `006`), `GENERATED` (Alembic `007`)
 
 **FileStatus** (`StrEnum`): `PENDING`, `COMMITTED`, `ARCHIVED`, `DELETED`
 - `PENDING` -> файл в процессе загрузки; если старше 1 часа — чистится фоновой задачей
@@ -105,7 +105,7 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 **ErrorCode** (`StrEnum`): `QUOTA_EXCEEDED`, `UNSUPPORTED_FORMAT`, `PRIVATE_SESSION_EXPIRED`,
 `DISK_UNAVAILABLE`, `PATH_TRAVERSAL_DETECTED`, `FILE_NOT_FOUND`, `ACCESS_DENIED`,
 `TOO_MANY_ATTEMPTS`, `EMAIL_ALREADY_EXISTS`, `INVALID_CREDENTIALS`, `UNAUTHORIZED`,
-`USER_NOT_FOUND`, `INTERNAL_ERROR`
+`USER_NOT_FOUND`, `INTERNAL_ERROR`, `GENERATED_INVALID`, `GENERATED_META_INVALID`
 
 ### Исключения
 
@@ -127,6 +127,8 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 | `ResumeValidationError` | Имя узла / поля / статуса невалидно (несёт свой `error_code`) | 400 |
 | `ResumeNodeExistsError` | Узел с таким именем уже есть среди соседей | 409 |
 | `ResumeMetaInvalidError` | `meta.yaml` / `statuses.yaml` невалиден | 409 |
+| `GeneratedValidationError` | Тело прогона не прошло проверку до записи (несёт `GENERATED_INVALID`) | 400 |
+| `GeneratedMetaInvalidError` | `meta.yaml` прогона отсутствует или не той формы | 409 |
 | `UserNotFoundError` | Пользователь не найден | 404 |
 | `SelfRoleChangeError` | Админ пытается сменить свою роль | 403 |
 | `SelfUserDeletionError` | Админ пытается удалить свой аккаунт | 403 |
@@ -477,6 +479,32 @@ prefix. Забирает записи в статусах `COMMITTED` и `ARCHIV
   - Пустое/дублирующееся имя (case-insensitive) или цвет не `#RRGGBB` → `RESUME_STATUS_INVALID`
   - Удаление статуса не переписывает ни одну вакансию: висячий `status_id` отдаётся как есть
 
+### GeneratedService
+
+Файл: `backend/app/application/generated_service.py`
+
+Архив одного прогона генерации. Сервис не вызывает генератор изображений и не входит в `qwen_image_gen_network`. Запись — обычный (незашифрованный) `FileService` с секцией `GENERATED` и root prefix `users/{user_id}/generated` (`user_generated_root_prefix`). Диск: `disk_id` уже существующей записи секции, иначе текущий write-диск. Нет диска → `503 DISK_UNAVAILABLE`.
+
+Каталог создаётся только после валидации и проверки квоты. Считаются байты `meta.yaml`, всех reference и `result.png` против общего `limit_bytes` (`total_bytes`; не `photos_bytes` и не `private_bytes`). Не влезло → `QuotaExceededError` и каталога нет. Ошибка записи удаляет частичный каталог.
+
+- `store_run(...)` -> `StoredGeneratedRun` (`id`, `created_at`)
+  - `prompt` обязателен и не из пробелов; `negative_prompt` по умолчанию `""`
+  - `seed`, `steps`, `width`, `height` — целые (допустима запись целого как `40.0`); `true_cfg_scale`, `duration` — конечные числа
+  - `result` обязателен и пишется как `result.png`
+  - references: 0–10 файлов, в порядке частей `images`, имена `ref-1.png`, `ref-2.png`, …
+  - пустая часть без имени пропускается
+  - id: UTC `YYYYmmddTHHMMSSZ` + `-` + 8 hex. Пять коллизий → `GeneratedValidationError`
+  - `meta.yaml`: все строки в кавычках
+- `list_runs(user_id)` -> list[`GeneratedListItem`]
+  - только каталоги под prefix пользователя, новые `created_at` первыми
+  - имя с `.` в начале, имя не в формате run id, или нечитаемый `meta.yaml` — пропуск (warning), остальной список жив
+- `get_run(user_id, run_id)` -> `GeneratedMeta`
+  - неизвестный или чужой id → `FileNotFoundError` (префикс — текущий пользователь)
+  - битый `meta.yaml` → `GeneratedMetaInvalidError`, файл не перезаписывается
+- `prepare_file` / `iter_file` — только `result.png` и `ref-N.png` из читаемого `meta.yaml`; иначе `FileNotFoundError`. Стрим `image/png`, `Content-Disposition: inline`
+- прогон, чьи горячие объекты заменены на `*.zst`, остаётся в списке, открывается и стримит `result.png` и `ref-N.png`
+- `delete_run` — `FileService.delete_directory_recursive`: объекты, `file_records` (включая `ARCHIVED`) и квота. Повторное удаление → `FileNotFoundError`. Генератор не вызывается
+
 ### AdminService
 
 Файл: `backend/app/application/admin_service.py`
@@ -616,6 +644,18 @@ Endpoints: GET / (status), GET /health
 | GET | /{id}/preview | Превью. 200 + image/jpeg |
 | GET | /{id}/original | Оригинал (stream). 200 |
 | DELETE | /{id} | Удаление фото. 204 |
+
+#### GeneratedRouter (`/api/generated`)
+
+Тот же `get_current_user`, что и остальные маршруты. `BLOCKED` → 403. Запись с генератора идёт с `X-Auth-User-Id` (и при наличии `X-Auth-Email`), без cookie. Сервис не вызывает генератор.
+
+| Method | Path | Описание |
+|---|---|---|
+| POST | / | multipart: `prompt`, optional `negative_prompt`, `seed`, `steps`, `true_cfg_scale`, `width`, `height`, `duration`, `images` (0–10), `result`. 201 `{id, created_at}`. 400 `GENERATED_INVALID` и 413 `QUOTA_EXCEEDED` ничего не пишут |
+| GET | / | Список прогонов пользователя, новые первыми. Битый `meta.yaml` пропускается |
+| GET | /{id} | Prompt, параметры, URL references и result. Битый `meta.yaml` → 409 `GENERATED_META_INVALID` |
+| GET | /{id}/files/{name} | Стрим `result.png` или перечисленного `ref-N.png` (`image/png`, inline). Иначе 404 |
+| DELETE | /{id} | 204. Освобождает объекты, `file_records` и квоту. Неизвестный id → 404 |
 
 #### QuotaRouter (`/api/quota`)
 

@@ -30,6 +30,7 @@ App mount
 | Sidebar expanded | Icons + labels + `StorageUsageBar` |
 | Sidebar collapsed | Icons only; quota bar hidden |
 | Nav Shared | Visible FAMILY/ADMIN |
+| Nav Generated Images | Directly under Photos. Visible for every signed-in role except `BLOCKED` |
 | Nav Admin | Visible ADMIN |
 
 Quota bar: `used_bytes` / `limit_bytes` from `GET /api/quota/me`. `limit_bytes` is the per-user admin-set cap (default 100 MB), not free disk capacity.
@@ -114,6 +115,46 @@ List may show `uploaded_by`. Delete forbidden for non-owner non-admin → error 
 
 Grid breakpoints: 2 cols &lt;640px; 3–4 tablet; auto-fill ≥200px desktop.  
 Formats: JPEG, PNG, HEIC, WEBP, GIF.
+
+---
+
+## 5a. Generated Images Flow (`/generated`)
+
+**Actor:** any signed-in user (`STRANGER`, `FAMILY`, `ADMIN`). The sidebar item sits directly under Photos and is hidden when the role is `BLOCKED`. There is no **New** button and no prompt form. This UI only lists, opens, and deletes runs that `POST /api/generated` already stored. See [E-GENERATED](./epics/generated-images/init.md).
+
+### List (`/generated`)
+
+`GET /api/generated`. Newest `created_at` first.
+
+| Element | Behavior |
+|---|---|
+| Title | “Generated Images” |
+| Row title | Local datetime from `created_at` via `formatDateTime` (en-US, day, month, year, hour, minute) |
+| Row subtitle | Prompt, clipped to one line |
+| Empty | “No generated images yet.” |
+| Delete | Trash control on the row. Confirm dialog title “Delete generated image?”; the body names that datetime and says it will be permanently deleted |
+| After `204` | The row is removed without reloading the list. The sidebar quota bar refreshes |
+
+A directory with unreadable `meta.yaml` is not a row. The rest of the list still loads. Rows are only the signed-in user’s.
+
+### Detail (`/generated/:id`)
+
+`GET /api/generated/{id}`. The response has no `id` or `created_at`; the page uses the route id and, when `created_at` is absent, the UTC stamp embedded in that id.
+
+| Element | Behavior |
+|---|---|
+| Title | Same local datetime as the list |
+| Prompt | Full text |
+| Negative prompt | Shown only when the trimmed value is non-empty |
+| References | Images in order, each labeled `image 1`, `image 2`, … |
+| Result | The result image |
+| Secondary line | `{width}×{height} · {steps} steps · CFG {true_cfg_scale} · seed {seed} · {duration}s` |
+| Image bytes | `<img src>` of `/api/generated/{id}/files/...` on this origin |
+| Unknown id | Heading “404”, “This generated image does not exist.”, link “Back to Generated Images” |
+| Unreadable `meta.yaml` | `409 GENERATED_META_INVALID` → “This generated image could not be read.” The file is left as it is |
+| Delete | Same confirm dialog. On `204`, quota refreshes and the page returns to `/generated` |
+
+Delete does not call the image generator.
 
 ---
 

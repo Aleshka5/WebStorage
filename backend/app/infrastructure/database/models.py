@@ -27,6 +27,7 @@ class FileSection(str, enum.Enum):
     PRIVATE = "PRIVATE"
     SHARED = "SHARED"
     RESUMES = "RESUMES"
+    GENERATED = "GENERATED"
 
 
 class FileStatus(str, enum.Enum):

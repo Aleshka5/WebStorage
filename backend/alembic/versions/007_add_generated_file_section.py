@@ -1,0 +1,28 @@
+"""add GENERATED value to the file_section enum
+
+Revision ID: 007_add_generated_file_section
+Revises: 006_add_resumes_file_section
+Create Date: 2026-09-27 12:00:00.000000
+
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+
+revision: str = "007_add_generated_file_section"
+down_revision: Union[str, None] = "006_add_resumes_file_section"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    # ALTER TYPE ... ADD VALUE cannot run inside a transaction block, so the
+    # migration transaction is committed before the enum is extended.
+    op.execute("COMMIT")
+    op.execute("ALTER TYPE file_section ADD VALUE IF NOT EXISTS 'GENERATED'")
+
+
+def downgrade() -> None:
+    # PostgreSQL cannot drop a value from an enum type, so this is a no-op.
+    pass

@@ -9,6 +9,7 @@ import {
   Key,
   Lock,
   Settings,
+  Sparkles,
   Users,
 } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
@@ -24,6 +25,7 @@ interface MenuItem {
 
 const MENU_ITEMS: MenuItem[] = [
   { to: "/photos", label: "Photos", icon: Camera },
+  { to: "/generated", label: "Generated Images", icon: Sparkles },
   { to: "/files", label: "Files", icon: Folder },
   { to: "/private", label: "Private", icon: Lock },
   { to: "/keys", label: "Keys Registry", icon: Key },
@@ -39,6 +41,10 @@ function isMenuItemVisible(to: string, role: string | undefined): boolean {
 
   if (to === "/admin") {
     return role === "ADMIN";
+  }
+
+  if (to === "/generated") {
+    return role !== "BLOCKED";
   }
 
   return true;
