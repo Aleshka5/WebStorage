@@ -491,6 +491,8 @@ Fields are square. Background `--paper`, border `1px solid var(--rule)`, text `-
 
 The table wraps in a raised surface and scrolls horizontally. Header cells use the uppercase label style on `--chip`. Body cells are nowrap, with a hairline under each row except the last. An empty table, an empty list, and a loading list all use `.empty`, centered, muted, padding `--s6 --s4`.
 
+A dense table adds `table-dense` on `.table-wrap`. Body text drops to `--step--1`, cell padding to `--s1 --s2`, and header tracking to `0.06em` at `0.68rem`. Row actions use a 2rem-tall button. An email or other long value may wrap (`overflow-wrap: anywhere`, max width `16rem`). Numeric fields inside the row are only as wide as the value (`5.5rem` for a quota). A note that explains a column, such as where a role is edited, sits above the table in muted meta text, not inside the header cell.
+
 ### States
 
 | State | UI |
@@ -715,7 +717,7 @@ A sibling list under a row, when the screen has one, is a wrap of muted links, w
 }
 ```
 
-That ring is the only radius on the page, apart from the diamond's dot. Hit targets for a primary control are at least 44×44px. `.btn` meets that. `.btn-small` is the header exception at `2.25rem`. Choice rows are at least `4.5rem` tall.
+That ring is the only radius on the page, apart from the diamond's dot. Hit targets for a primary control are at least 44×44px. `.btn` meets that. `.btn-small` is the header exception at `2.25rem`. A button inside `.table-dense` is `2rem` tall. Choice rows are at least `4.5rem` tall.
 
 `.sr-only` hides text visually and keeps it available to assistive tech. The stylesheet defines it.
 
@@ -734,7 +736,7 @@ A service looks like the others when every line is true.
 5. The first focusable control is the skip link. The view has one `h1` under a kicker. Buttons, fields, banners, and tables use the classes in the stylesheet.
 6. A list the reader chooses from is a hairline choice row. A short form sits in `.panel`.
 7. Loading, empty, and error copy are specific sentences. A skeleton waits 120ms.
-8. At 620px the wordmark is gone and the service list still scrolls. At 760px the page padding is `--s4`.
+8. At 620px the wordmark is gone and the service list still scrolls. At 760px the page padding is `--s4`, a dense table is a stack of records, and the document itself does not scroll sideways. See section 15.
 9. `prefers-reduced-motion` collapses the two durations. A keyboard walk shows the focus ring on every stop.
 10. `lang` is `en`, `color-scheme` is `light`, the faces are the self-hosted files, and the tab icon is the diamond below.
 
@@ -1092,6 +1094,7 @@ h3 { font-size: var(--step-2); }
 
 .main {
   flex: 1;
+  min-width: 0;
   padding: var(--s5) var(--s5) var(--s8);
 }
 
@@ -1496,6 +1499,40 @@ th {
 
 tr:last-child td { border-bottom: 0; }
 
+.table-dense {
+  position: relative;
+}
+
+.table-dense table {
+  font-size: var(--step--1);
+}
+
+.table-dense th,
+.table-dense td {
+  padding: var(--s1) var(--s2);
+}
+
+.table-dense th {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+}
+
+.table-dense .cell-email {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 16rem;
+}
+
+.table-dense .actions {
+  flex-wrap: nowrap;
+}
+
+.table-dense .btn {
+  min-height: 2rem;
+  padding: var(--s1) var(--s2);
+  font-size: var(--step--1);
+}
+
 .status-blocked {
   color: var(--danger);
   font-weight: 600;
@@ -1619,6 +1656,94 @@ button:disabled {
     grid-column: 2;
     white-space: normal;
   }
+
+  .filters {
+    align-items: stretch;
+  }
+
+  .filters input {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .page-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .footer {
+    padding: var(--s4);
+  }
+
+  .table-dense {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .table-dense table,
+  .table-dense tbody,
+  .table-dense tr,
+  .table-dense td {
+    display: block;
+    width: 100%;
+  }
+
+  .table-dense thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .table-dense tr {
+    border: 1px solid var(--rule);
+    background: var(--paper-raised);
+    margin-bottom: var(--s3);
+  }
+
+  .table-dense td {
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 38%) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--s2);
+    max-width: none;
+    white-space: normal;
+    text-align: right;
+    padding: var(--s2) var(--s3);
+  }
+
+  .table-dense td::before {
+    content: attr(data-label);
+    text-align: left;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    font-weight: 600;
+  }
+
+  .table-dense td[colspan] {
+    display: block;
+    text-align: center;
+  }
+
+  .table-dense td[colspan]::before {
+    content: none;
+  }
+
+  .table-dense .cell-email {
+    max-width: none;
+  }
+
+  .table-dense .actions {
+    justify-content: flex-end;
+  }
+
+  .table-dense .quota-input {
+    justify-self: end;
+  }
 }
 
 @media (max-width: 620px) {
@@ -1651,3 +1776,45 @@ Save this as `/favicon.svg`.
   <circle cx="16" cy="16" r="3.2" fill="#b85c38"/>
 </svg>
 ```
+
+---
+
+## 15. Narrow screens
+
+Look at every view at `1280px` and at `390px` wide. The document itself does not scroll horizontally. `.main` is `min-width: 0`, so a wide table scrolls inside `.table-wrap` instead of stretching the page. A control that can be reached only by flicking the page sideways is a failed layout. Two strips may scroll on their own: the service list in the header, and a storage side nav that has become a horizontal row.
+
+| Width | What changes |
+|---|---|
+| `1080px` and below | A storage side nav becomes one horizontal strip under the header. Labels stay visible, the strip scrolls, and the collapse control is hidden. The usage line sits under that strip, full width. |
+| `760px` and below | Page and footer padding are `--s4`. The page head stacks, title above actions. Filters wrap, and the search field takes the full row. A pager’s action pair stretches across the row. Card grids are one column. |
+| `620px` and below | The wordmark is hidden. The service list scrolls inside the header. |
+
+### Dense tables on a phone
+
+Under `760px`, `.table-dense` stops being a wide grid. Each `tr` is a raised block with a hairline border and `--paper-raised` background. The header row is clipped off screen and stays in the document. Each `td` carries `data-label` with the same words as its header. The label is on the left, the value on the right, in a two-column grid (`minmax(6.5rem, 38%)` and the rest). A loading or empty cell uses `colspan` and does not grow a label. Row actions sit at the end of their line. A numeric field aligns to the end of its cell.
+
+Use the stack when the table has more than four columns. A table of three columns may keep scrolling inside `.table-wrap`.
+
+```html
+<div class="table-wrap table-dense">
+  <table>
+    <thead>
+      <tr><th>Email</th><th>Role</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="cell-email" data-label="Email">ada@example.com</td>
+        <td data-label="Role">ADMIN</td>
+        <td data-label="Actions"><div class="actions"><button type="button" class="btn btn-small btn-danger">Block</button></div></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+```
+
+### What stays large
+
+Primary actions outside a table stay at least 44×44px. The phone layout uses smaller type and padding inside records. It does not shrink the page’s main buttons. Segmented filters may wrap onto a second line. Their hit target stays `2.75rem`.
+
+Long emails wrap anywhere. Dates and quotas stay on one line inside their value column. Disk and other summary cards already use a wrapping grid. On a phone that grid is a single column so a meter and its figures are readable without sideways scrolling.
+

@@ -291,6 +291,7 @@ export default function AdminPage() {
     <PageFrame title="Admin" lead="Quotas, accounts, and disks for this storage service.">
       <section className="a-section">
         <h2>Users</h2>
+        <p className="role-note">Role is changed in Auth-Service /admin.</p>
 
         <div className="filters">
           <div className="segment" role="group" aria-label="Role">
@@ -323,19 +324,16 @@ export default function AdminPage() {
 
         {error && <div className="banner error">{error}</div>}
 
-        <div className="table-wrap">
+        <div className="table-wrap table-dense">
           <table>
             <thead>
               <tr>
                 <th>Email</th>
-                <th>
-                  Role
-                  <span className="role-note">changed in Auth-Service /admin</span>
-                </th>
+                <th>Role</th>
                 <th>Status</th>
                 <th>Used</th>
-                <th>Total quota (MB)</th>
-                <th>Private quota (GB)</th>
+                <th>Quota, MB</th>
+                <th>Private, GB</th>
                 <th>Registered</th>
                 <th>
                   <span className="sr-only">Actions</span>
@@ -358,25 +356,34 @@ export default function AdminPage() {
               ) : (
                 users.map((user) => (
                   <tr key={user.id}>
-                    <td>{user.email}</td>
-                    <td className={user.role === "BLOCKED" ? "status-blocked" : undefined}>
+                    <td className="cell-email" data-label="Email">
+                      {user.email}
+                    </td>
+                    <td
+                      data-label="Role"
+                      className={user.role === "BLOCKED" ? "status-blocked" : undefined}
+                    >
                       {user.role}
                     </td>
-                    <td className={user.is_active ? undefined : "status-blocked"}>
+                    <td
+                      data-label="Status"
+                      className={user.is_active ? undefined : "status-blocked"}
+                    >
                       {user.is_active ? "Active" : "Blocked"}
                     </td>
-                    <td>{formatBytes(user.quota_used_bytes, false)}</td>
-                    <td>
+                    <td data-label="Used">{formatBytes(user.quota_used_bytes, false)}</td>
+                    <td data-label="Quota, MB">
                       <TotalQuotaInput user={user} onSaved={() => void fetchUsers()} />
                     </td>
-                    <td>
+                    <td data-label="Private, GB">
                       <PrivateQuotaInput user={user} onSaved={() => void fetchUsers()} />
                     </td>
-                    <td>{formatDateTime(user.created_at)}</td>
-                    <td>
+                    <td data-label="Registered">{formatDateTime(user.created_at)}</td>
+                    <td data-label="Actions">
                       <div className="actions">
                         <Button
                           variant="danger"
+                          className="btn-small"
                           disabled={!user.is_active || user.id === currentUser.user_id}
                           onClick={() => void handleBlock(user)}
                         >
@@ -384,6 +391,7 @@ export default function AdminPage() {
                         </Button>
                         <Button
                           variant="secondary"
+                          className="btn-small"
                           disabled={user.id === currentUser.user_id}
                           onClick={() => void handleDelete(user)}
                         >
