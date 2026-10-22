@@ -450,6 +450,12 @@ Mount the overlay on `document.body`. Do the same for every other viewport layer
 
 `.overlay` is `position: fixed; inset: 0`, a flex center, padding `--s4`, `z-index: 40`. The scrim is `.overlay-dismiss`: a button covering the overlay, ink mixed to 28% transparency, no drop shadow. The panel is `position: relative; z-index: 1`, so Cancel and the danger confirm sit above the scrim and take the click. The scrim and Escape run the same close action. While the request is in flight, both buttons are disabled (`opacity: 0.55`) and the confirm button keeps its label. The same two actions are used for every destructive confirm: ghost Cancel, danger confirm.
 
+### Full-size photo
+
+A photo opened from the grid is a viewport layer, mounted on `document.body` like a confirm dialog. It is centered on the screen. The back is the same scrim (`.overlay-dismiss`, ink at 28%). The header, sidebar, and footer stay visible through that scrim. The viewer does not paint an opaque page over the frame.
+
+The photo sits in `.lightbox-figure` (`z-index: 1`, raised paper, 1px rule) and scales down to the space inside the scrim (`max-width: 100%`, `max-height` short of the viewport, `min-width: 0` so a wide image cannot spill over the frame). Close, previous, next, and download stay on that same layer, on raised paper, above the scrim. The scrim and Escape close the viewer.
+
 ---
 
 ## 8. Controls
@@ -760,7 +766,7 @@ A service looks like the others when every line is true.
 3. The header shows the diamond, the wordmark linking to `https://filenkov.store`, the service list from section 5.1 with this host as `aria-current="page"`, and either `Checking sign-in…`, `Sign in`, or the username plus `Sign out`.
 4. Guests reach `https://filenkov.store/auth?return_to=…`. The service draws no Google button and reads no JWT.
 5. The first focusable control is the skip link. The view has one `h1` under a kicker. Buttons, fields, banners, and tables use the classes in the stylesheet.
-6. A list the reader chooses from is a hairline choice row. A short form sits in `.panel`. A confirm dialog is portaled to `document.body` and centered on the viewport, with Cancel and the confirm button above the scrim.
+6. A list the reader chooses from is a hairline choice row. A short form sits in `.panel`. A confirm dialog and a full-size photo are portaled to `document.body` and centered on the viewport. The scrim is ink at 28%. The approval buttons, or the photo, sit above it. The viewer does not paint an opaque page over the frame.
 7. Loading, empty, and error copy are specific sentences. A skeleton waits 120ms.
 8. At 620px the wordmark is gone and the service list still scrolls. At 760px the page padding is `--s4`, a dense table is a stack of records, and the document itself does not scroll sideways. See section 15.
 9. `prefers-reduced-motion` collapses the two durations. A keyboard walk shows the focus ring on every stop.
@@ -1431,6 +1437,7 @@ h3 { font-size: var(--step-2); }
 .overlay-dismiss {
   position: absolute;
   inset: 0;
+  display: block;
   border: 0;
   background: color-mix(in srgb, var(--ink) 28%, transparent);
   cursor: pointer;
