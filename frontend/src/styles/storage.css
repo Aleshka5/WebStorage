@@ -661,6 +661,11 @@ td:has(.banner) {
     border-bottom: 1px solid var(--rule);
   }
 
+  .side,
+  .side-nav {
+    min-width: 0;
+  }
+
   .side-nav {
     flex-direction: row;
     overflow-x: auto;
@@ -681,6 +686,10 @@ td:has(.banner) {
 
   .side-foot {
     margin-top: 0;
+  }
+
+  .side-toggle {
+    display: none;
   }
 }
 
@@ -705,6 +714,27 @@ td:has(.banner) {
     flex-direction: column;
     align-items: stretch;
   }
+
+  .pager {
+    align-items: stretch;
+  }
+
+  .pager .actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side {
+    padding: var(--s2) var(--s3);
+  }
+
+  .side-link {
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 900px) {
@@ -724,7 +754,9 @@ td:has(.banner) {
 }
 
 .quota-input {
-  width: calc(var(--s8) * 2);
+  width: 5.5rem;
+  padding: var(--s1) var(--s2);
+  font-size: var(--step--1);
 }
 
 .text-link {
@@ -739,7 +771,8 @@ td:has(.banner) {
 
 .role-note {
   display: block;
-  margin-top: var(--s1);
+  margin: 0 0 var(--s4);
+  color: var(--ink-muted);
   font-size: var(--step--1);
   letter-spacing: 0.04em;
   text-transform: none;

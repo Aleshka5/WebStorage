@@ -2,16 +2,6 @@ import { useState } from "react";
 import { useAuthStore } from "../../store/auth";
 import { displayName, hubHref, signInHref } from "../../utils/hub";
 
-interface ServiceLink {
-  label: string;
-  href: string;
-}
-
-const PUBLIC_SERVICES: ServiceLink[] = [
-  { label: "Messanger", href: "https://messanger.filenkov.store" },
-  { label: "Hermes", href: "https://filenkov.store/hermes/chat" },
-];
-
 export function Header() {
   const user = useAuthStore((state) => state.user);
   const sessionChecked = useAuthStore((state) => state.sessionChecked);
@@ -34,14 +24,6 @@ export function Header() {
         <span className="brand-name">Filenkov</span>
       </a>
       <nav className="service-nav" aria-label="Primary">
-        <a href={PUBLIC_SERVICES[0].href} title={isGuest ? "Sign in required" : undefined}>
-          {PUBLIC_SERVICES[0].label}
-          {isGuest ? (
-            <span className="service-lock" aria-hidden="true">
-              🔒
-            </span>
-          ) : null}
-        </a>
         <span aria-current="page">
           Storage
           {isGuest ? (
@@ -50,14 +32,6 @@ export function Header() {
             </span>
           ) : null}
         </span>
-        <a href={PUBLIC_SERVICES[1].href} title={isGuest ? "Sign in required" : undefined}>
-          {PUBLIC_SERVICES[1].label}
-          {isGuest ? (
-            <span className="service-lock" aria-hidden="true">
-              🔒
-            </span>
-          ) : null}
-        </a>
       </nav>
       <div className="header-right">
         {!sessionChecked ? <span className="muted">Checking sign-in…</span> : null}
