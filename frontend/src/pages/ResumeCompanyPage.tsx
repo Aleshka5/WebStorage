@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { SlidersHorizontal } from "lucide-react";
+import { PageFrame } from "../components/Layout/PageFrame";
 import { ResumeBreadcrumbs } from "../components/Resumes/ResumeBreadcrumbs";
 import { ResumeStatusBadge } from "../components/Resumes/ResumeStatusBadge";
 import { ResumeStatusEditor } from "../components/Resumes/ResumeStatusEditor";
@@ -59,21 +60,17 @@ export default function ResumeCompanyPage() {
   );
 
   const toolbar = (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <Link
-          to="/vacancies"
-          className="rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
-        >
+    <div className="tool">
+      <div className="actions">
+        <Link className="btn btn-ghost" to="/vacancies">
           All vacancies
         </Link>
         <Button
           type="button"
           variant="secondary"
-          className="w-auto"
           onClick={() => setIsEditorOpen((current) => !current)}
         >
-          <SlidersHorizontal size={16} className="mr-1.5" />
+          <SlidersHorizontal size={16} aria-hidden="true" />
           Edit statuses
         </Button>
       </div>
@@ -91,7 +88,7 @@ export default function ResumeCompanyPage() {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
+    <PageFrame title={company || "Company"} kicker="Resumes" lead="Vacancies at this company.">
       <ResumeBreadcrumbs
         crumbs={[
           { label: "Resumes", to: "/resumes" },
@@ -99,8 +96,7 @@ export default function ResumeCompanyPage() {
           { label: company },
         ]}
       />
-      <h2 className="text-xl font-semibold text-zinc-100">{company}</h2>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div>
         <ResumeTreeSection
           parentPath={parentPath}
           entityLabel="vacancy"
@@ -115,6 +111,6 @@ export default function ResumeCompanyPage() {
           buildItemHref={(node: ResumeNode) => buildResumeRoute([country, company, node.name])}
         />
       </div>
-    </div>
+    </PageFrame>
   );
 }

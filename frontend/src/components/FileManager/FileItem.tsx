@@ -131,113 +131,111 @@ export function FileItem({
   };
 
   return (
-    <tr
-      className="border-b border-zinc-800/80 transition-colors hover:bg-zinc-800/40"
-      onDoubleClick={handleDoubleClick}
-    >
-        <td className="w-10 px-3 py-3 text-zinc-400">
-          {item.is_dir ? (
-            <Folder className="h-5 w-5 text-amber-400" aria-hidden="true" />
-          ) : (
-            <File className="h-5 w-5 text-sky-400" aria-hidden="true" />
-          )}
-        </td>
-        <td className="min-w-[180px] px-3 py-3">
-          {isRenaming ? (
-            <div className="flex flex-col gap-1">
-              <input
-                ref={renameInputRef}
-                value={renameValue}
-                onChange={(event) => {
-                  setRenameValue(event.target.value);
-                  if (renameError) {
-                    setRenameError(undefined);
-                  }
-                }}
-                onKeyDown={handleRenameKeyDown}
-                onBlur={() => {
-                  void submitRename();
-                }}
-                disabled={isBusy}
-                className="w-full rounded-md border border-zinc-600 bg-zinc-800 px-2 py-1 text-sm text-zinc-100 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500/50"
-              />
-              {renameError && <p className="text-xs text-red-400">{renameError}</p>}
-            </div>
-          ) : (
-            <div className="min-w-0">
-              <button
-                type="button"
-                className="max-w-full truncate text-left text-sm text-zinc-100 hover:text-sky-300"
-                onClick={() => {
-                  if (item.is_dir) {
-                    onOpenFolder(item.path);
-                  }
-                }}
-              >
-                {item.name}
-              </button>
-              {showUploader && !item.is_dir && item.uploaded_by && (
-                <p className="mt-0.5 truncate text-xs text-zinc-500">{item.uploaded_by}</p>
-              )}
-            </div>
-          )}
-        </td>
-        <td className="hidden px-3 py-3 text-sm text-zinc-400 sm:table-cell">
-          {formatBytes(item.size, item.is_dir)}
-        </td>
-        <td className="hidden px-3 py-3 text-sm text-zinc-400 md:table-cell">
-          {formatDateTime(item.modified_at)}
-        </td>
-        <td className="px-3 py-3">
-          <div className="flex items-center justify-end gap-1">
-            {item.is_dir ? (
-              <button
-                type="button"
-                title="Download as archive"
-                disabled={isBusy}
-                onClick={() => {
-                  void handleDownloadFolder();
-                }}
-                className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-50"
-              >
-                <Download className="h-4 w-4" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                title="Download"
-                disabled={isBusy}
-                onClick={() => {
-                  void handleDownload();
-                }}
-                className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-50"
-              >
-                <Download className="h-4 w-4" />
-              </button>
-            )}
-            <button
-              type="button"
-              title="Rename"
-              disabled={isBusy || isRenaming}
-              onClick={startRename}
-              className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-50"
-            >
-              <Pencil className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              title="Delete"
+    <tr onDoubleClick={handleDoubleClick}>
+      <td>
+        {item.is_dir ? (
+          <Folder size={18} aria-hidden="true" />
+        ) : (
+          <File size={18} aria-hidden="true" />
+        )}
+      </td>
+      <td>
+        {isRenaming ? (
+          <div className={renameError ? "field is-invalid" : "field"}>
+            <label className="sr-only" htmlFor={`rename-${item.path}`}>
+              New name
+            </label>
+            <input
+              id={`rename-${item.path}`}
+              ref={renameInputRef}
+              value={renameValue}
+              onChange={(event) => {
+                setRenameValue(event.target.value);
+                if (renameError) {
+                  setRenameError(undefined);
+                }
+              }}
+              onKeyDown={handleRenameKeyDown}
+              onBlur={() => {
+                void submitRename();
+              }}
               disabled={isBusy}
-              onClick={() => onDeleteRequest(item)}
-              className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-red-900/40 hover:text-red-300 disabled:opacity-50"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+            />
+            {renameError && <p className="form-error">{renameError}</p>}
           </div>
-          {actionError && (
-            <ErrorMessage message={actionError} className="mt-1 text-right text-xs" />
+        ) : (
+          <div>
+            <button
+              type="button"
+              className="name-button"
+              onClick={() => {
+                if (item.is_dir) {
+                  onOpenFolder(item.path);
+                }
+              }}
+            >
+              {item.name}
+            </button>
+            {showUploader && !item.is_dir && item.uploaded_by && (
+              <p className="uploader">{item.uploaded_by}</p>
+            )}
+          </div>
+        )}
+      </td>
+      <td className="hide-sm">{formatBytes(item.size, item.is_dir)}</td>
+      <td className="hide-md">{formatDateTime(item.modified_at)}</td>
+      <td>
+        <div className="cell-actions">
+          {item.is_dir ? (
+            <button
+              type="button"
+              title="Download as archive"
+              aria-label="Download as archive"
+              disabled={isBusy}
+              onClick={() => {
+                void handleDownloadFolder();
+              }}
+              className="icon-btn"
+            >
+              <Download size={16} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              title="Download"
+              aria-label="Download"
+              disabled={isBusy}
+              onClick={() => {
+                void handleDownload();
+              }}
+              className="icon-btn"
+            >
+              <Download size={16} />
+            </button>
           )}
-        </td>
-      </tr>
+          <button
+            type="button"
+            title="Rename"
+            aria-label="Rename"
+            disabled={isBusy || isRenaming}
+            onClick={startRename}
+            className="icon-btn"
+          >
+            <Pencil size={16} />
+          </button>
+          <button
+            type="button"
+            title="Delete"
+            aria-label="Delete"
+            disabled={isBusy}
+            onClick={() => onDeleteRequest(item)}
+            className="icon-btn danger"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+        {actionError && <ErrorMessage message={actionError} />}
+      </td>
+    </tr>
   );
 }

@@ -38,19 +38,15 @@ export function VacancyStatusFilter({
     );
   };
 
-  const options: Array<{ key: string; name: string; color: string }> = [
+  const options: Array<{ key: string; name: string; color?: string }> = [
     ...statuses.map((status) => ({ key: status.id, name: status.name, color: status.color })),
-    { key: NO_STATUS_KEY, name: "No status", color: "#52525B" },
+    { key: NO_STATUS_KEY, name: "No status" },
   ];
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <div
-          role="radiogroup"
-          aria-label="Status filter mode"
-          className="inline-flex overflow-hidden rounded-lg border border-zinc-700"
-        >
+    <div className="surface stack-tight">
+      <div className="cluster">
+        <div className="segment" role="radiogroup" aria-label="Status filter mode">
           {MODES.map((option) => (
             <button
               key={option.value}
@@ -59,40 +55,26 @@ export function VacancyStatusFilter({
               aria-checked={mode === option.value}
               title={option.hint}
               onClick={() => onModeChange(option.value)}
-              className={[
-                "px-3 py-1.5 text-sm font-medium transition-colors",
-                mode === option.value
-                  ? "bg-sky-600/20 text-sky-300"
-                  : "bg-zinc-800/60 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200",
-              ].join(" ")}
             >
               {option.label}
             </button>
           ))}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="cluster">
           {options.map((option) => {
             const checked = selectedSet.has(option.key);
             return (
-              <label
-                key={option.key}
-                className={[
-                  "inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors",
-                  checked
-                    ? "border-sky-500/60 bg-sky-500/10 text-zinc-100"
-                    : "border-zinc-700 bg-zinc-800/60 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200",
-                ].join(" ")}
-              >
+              <label key={option.key} className={checked ? "choice-chip is-on" : "choice-chip"}>
                 <input
                   type="checkbox"
                   checked={checked}
                   onChange={() => toggle(option.key)}
-                  className="h-3.5 w-3.5 accent-sky-500"
+                  className="sr-only"
                 />
                 <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: option.color }}
+                  className={option.color ? "swatch" : "swatch muted"}
+                  style={option.color ? { backgroundColor: option.color } : undefined}
                   aria-hidden="true"
                 />
                 {option.name}
@@ -102,21 +84,17 @@ export function VacancyStatusFilter({
         </div>
 
         {isActive && (
-          <button
-            type="button"
-            onClick={() => onSelectedChange([])}
-            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            <X size={14} />
+          <button type="button" className="btn btn-ghost" onClick={() => onSelectedChange([])}>
+            <X size={14} aria-hidden="true" />
             Clear
           </button>
         )}
       </div>
 
-      <p className="text-xs text-zinc-500">
+      <p className="muted">
         {isActive
           ? `Showing ${matchedCount} of ${totalCount} vacancies`
-          : `${totalCount} ${totalCount === 1 ? "vacancy" : "vacancies"} — select statuses to filter`}
+          : `${totalCount} ${totalCount === 1 ? "vacancy" : "vacancies"}. Select statuses to filter.`}
       </p>
     </div>
   );

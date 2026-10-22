@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { FileNode, SortDirection, SortField } from "../../types/files";
+import { LoadingBlock } from "../ui/LoadingBlock";
 import { FileItem } from "./FileItem";
 
 interface FileListProps {
@@ -26,13 +27,13 @@ function SortIcon({
   sortDirection: SortDirection;
 }) {
   if (field !== sortField) {
-    return <ArrowUpDown className="h-3.5 w-3.5 opacity-40" aria-hidden="true" />;
+    return <ArrowUpDown size={14} aria-hidden="true" />;
   }
 
   return sortDirection === "asc" ? (
-    <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+    <ArrowUp size={14} aria-hidden="true" />
   ) : (
-    <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+    <ArrowDown size={14} aria-hidden="true" />
   );
 }
 
@@ -52,12 +53,8 @@ function SortableHeader({
   className?: string;
 }) {
   return (
-    <th className={`px-3 py-3 text-left ${className}`.trim()}>
-      <button
-        type="button"
-        onClick={() => onSortChange(field)}
-        className="inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-zinc-500 transition-colors hover:text-zinc-300"
-      >
+    <th className={className}>
+      <button type="button" onClick={() => onSortChange(field)}>
         {label}
         <SortIcon field={field} sortField={sortField} sortDirection={sortDirection} />
       </button>
@@ -79,11 +76,11 @@ export function FileList({
   onDeleteRequest,
 }: FileListProps) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/50">
-      <table className="min-w-full border-collapse">
+    <div className="table-wrap">
+      <table>
         <thead>
-          <tr className="border-b border-zinc-800 bg-zinc-900/80">
-            <th className="w-10 px-3 py-3" aria-label="Type" />
+          <tr>
+            <th aria-label="Type" />
             <SortableHeader
               label="Name"
               field="name"
@@ -97,7 +94,7 @@ export function FileList({
               sortField={sortField}
               sortDirection={sortDirection}
               onSortChange={onSortChange}
-              className="hidden sm:table-cell"
+              className="hide-sm"
             />
             <SortableHeader
               label="Modified"
@@ -105,24 +102,22 @@ export function FileList({
               sortField={sortField}
               sortDirection={sortDirection}
               onSortChange={onSortChange}
-              className="hidden md:table-cell"
+              className="hide-md"
             />
-            <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Actions
-            </th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {isLoading ? (
             <tr>
-              <td colSpan={5} className="px-3 py-10 text-center text-sm text-zinc-500">
-                Loading...
+              <td colSpan={5}>
+                <LoadingBlock active label="Loading files…" />
               </td>
             </tr>
           ) : items.length === 0 ? (
             <tr>
-              <td colSpan={5} className="px-3 py-10 text-center text-sm text-zinc-500">
-                This folder is empty. Drag files here or click Upload.
+              <td colSpan={5}>
+                <p className="empty">This folder is empty. Drag files here or click Upload.</p>
               </td>
             </tr>
           ) : (

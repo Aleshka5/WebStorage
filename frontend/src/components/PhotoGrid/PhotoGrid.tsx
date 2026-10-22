@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { LoadingBlock } from "../ui/LoadingBlock";
 import type { PhotoItem } from "../../types/photos";
 import { Lightbox } from "./Lightbox";
 import { PhotoItemComponent } from "./PhotoItem";
@@ -49,19 +50,10 @@ export function PhotoGrid({
       </div>
 
       {photos.length === 0 && !isLoading && (
-        <p className="py-12 text-center text-zinc-500">
-          No photos yet. Tap “+” to upload.
-        </p>
+        <p className="empty">No photos yet. Use Upload to add some.</p>
       )}
 
-      {isLoading && (
-        <div className="flex justify-center py-6" aria-live="polite">
-          <span
-            className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-600 border-t-sky-500"
-            aria-label="Loading"
-          />
-        </div>
-      )}
+      {isLoading && <LoadingBlock active label="Loading photos…" />}
 
       {hasNext && !isLoading && photos.length > 0 && (
         <div ref={sentinelRef} className="h-1 w-full" aria-hidden="true" />

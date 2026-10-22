@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
-import { AppLayout } from "./components/Layout/AppLayout";
+import { AppLayout, Shell } from "./components/Layout/AppLayout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { ResumesGuard } from "./components/Resumes/ResumesGuard";
 import { Button } from "./components/ui/Button";
+import { LoadingBlock } from "./components/ui/LoadingBlock";
 import { ErrorMessage } from "./components/ui/ErrorMessage";
 import AdminPage from "./pages/AdminPage";
 import AllVacanciesPage from "./pages/AllVacanciesPage";
@@ -21,19 +22,15 @@ import SharedPage from "./pages/SharedPage";
 import { useAuthStore } from "./store/auth";
 
 function SessionBootstrap() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950">
-      <span className="h-8 w-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-    </div>
-  );
+  return <LoadingBlock active label="Checking sign-in…" />;
 }
 
 function UserServiceUnavailableScreen({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
-      <ErrorMessage errorCode="USER_SERVICE_UNAVAILABLE" className="mb-4 text-center" />
-      <Button type="button" onClick={onRetry} className="w-full max-w-xs">
-        Retry
+    <div className="error-block">
+      <ErrorMessage errorCode="USER_SERVICE_UNAVAILABLE" />
+      <Button type="button" onClick={onRetry}>
+        Reload
       </Button>
     </div>
   );
@@ -41,11 +38,10 @@ function UserServiceUnavailableScreen({ onRetry }: { onRetry: () => void }) {
 
 function UnauthorizedScreen() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
+    <div className="error-block">
       <ErrorMessage
         errorCode="UNAUTHORIZED"
         message="Open this site through the hub. Storage does not handle sign-in."
-        className="text-center"
       />
     </div>
   );
@@ -121,21 +117,31 @@ export function AppRouter() {
   }, [fetchMe, retryNonce]);
 
   if (!sessionReady) {
-    return <SessionBootstrap />;
+    return (
+      <Shell>
+        <SessionBootstrap />
+      </Shell>
+    );
   }
 
   if (userServiceUnavailable) {
     return (
-      <UserServiceUnavailableScreen
-        onRetry={() => {
-          setRetryNonce((value) => value + 1);
-        }}
-      />
+      <Shell>
+        <UserServiceUnavailableScreen
+          onRetry={() => {
+            setRetryNonce((value) => value + 1);
+          }}
+        />
+      </Shell>
     );
   }
 
   if (unauthorized) {
-    return <UnauthorizedScreen />;
+    return (
+      <Shell>
+        <UnauthorizedScreen />
+      </Shell>
+    );
   }
 
   return <RouterProvider router={router} />;

@@ -32,11 +32,9 @@ export function DeleteGeneratedDialog({
       }}
       title="Delete generated image?"
     >
-      <p className="mb-4 text-sm text-zinc-300">
-        {label} will be permanently deleted.
-      </p>
-      {errorCode && <ErrorMessage errorCode={errorCode} className="mb-4" />}
-      <div className="flex gap-2">
+      <p>{label} will be permanently deleted.</p>
+      {errorCode && <ErrorMessage errorCode={errorCode} />}
+      <div className="actions">
         <Button type="button" variant="secondary" onClick={onClose} disabled={isDeleting}>
           Cancel
         </Button>

@@ -45,68 +45,45 @@ export function PhotoUploadFab({
 
   return (
     <>
-      <div className="fixed bottom-6 right-6 z-40">
-        {/*
-          iOS Safari: programmatic input.click() из отдельной кнопки часто не вызывает change.
-          Input накладывается на FAB — пользователь тапает напрямую по input.
-        */}
-        <label
-          className={[
-            "relative flex h-14 w-14 cursor-pointer items-center justify-center overflow-hidden",
-            "rounded-full bg-sky-600 text-white shadow-lg shadow-sky-900/40",
-            "transition-colors hover:bg-sky-500 focus-within:outline-none focus-within:ring-2",
-            "focus-within:ring-sky-500 focus-within:ring-offset-2 focus-within:ring-offset-zinc-950",
-          ].join(" ")}
-          aria-label="Upload photos"
-        >
+      <div className="upload-fab">
+        <label className="btn" aria-label="Upload photos">
           <input
             type="file"
             accept="image/*"
             multiple
-            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
             onChange={handleInputChange}
             onInput={handleInputChange}
           />
-          <Plus className="pointer-events-none h-7 w-7" aria-hidden="true" />
+          <Plus size={18} aria-hidden="true" />
         </label>
       </div>
 
       {uploads.length > 0 && (
-        <div className="fixed bottom-24 right-6 z-40 w-72 max-w-[calc(100vw-3rem)] rounded-xl border border-zinc-800 bg-zinc-900/95 p-3 shadow-xl backdrop-blur-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium text-zinc-200">Uploading photos</p>
-            <button
-              type="button"
-              onClick={onClearFinished}
-              className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-              aria-label="Hide completed"
-            >
-              <X className="h-4 w-4" />
+        <div className="upload-dock surface">
+          <div className="toolbar">
+            <p>Uploading photos</p>
+            <button type="button" onClick={onClearFinished} className="icon-btn" aria-label="Hide completed">
+              <X size={16} />
             </button>
           </div>
-          <ul className="max-h-48 space-y-2 overflow-y-auto">
+          <ul className="stack-tight">
             {uploads.map((upload) => (
-              <li key={upload.id} className="text-sm">
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <span className="truncate text-zinc-300">{upload.name}</span>
-                  <span className="shrink-0 text-xs text-zinc-500">
+              <li key={upload.id}>
+                <div className="toolbar">
+                  <span>{upload.name}</span>
+                  <span className="muted nowrap">
                     {upload.status === "uploading" &&
-                      (upload.progress >= 100 ? "Saving..." : `${upload.progress}%`)}
+                      (upload.progress >= 100 ? "Saving…" : `${upload.progress}%`)}
                     {upload.status === "done" && "Done"}
                     {upload.status === "error" && "Error"}
                   </span>
                 </div>
                 {upload.status === "uploading" && (
-                  <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
-                    <div
-                      className="h-full rounded-full bg-sky-500 transition-all"
-                      style={{ width: `${upload.progress}%` }}
-                    />
+                  <div className="meter" aria-hidden="true">
+                    <span style={{ width: `${upload.progress}%` }} />
                   </div>
                 )}
-                {upload.status === "error" && (
-                  <ErrorMessage errorCode={upload.error_code} className="text-xs" />
-                )}
+                {upload.status === "error" && <ErrorMessage errorCode={upload.error_code} />}
               </li>
             ))}
           </ul>

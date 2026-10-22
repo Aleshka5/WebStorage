@@ -13,6 +13,7 @@ interface AuthState {
   isLoading: boolean;
   userServiceUnavailable: boolean;
   unauthorized: boolean;
+  sessionChecked: boolean;
   fetchMe: () => Promise<void>;
 }
 
@@ -21,18 +22,27 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoading: false,
   userServiceUnavailable: false,
   unauthorized: false,
+  sessionChecked: false,
 
   fetchMe: async () => {
+    set({ sessionChecked: false });
+
     try {
       const { data } = await api.get<User>("/api/auth/me");
       set({
         user: data,
         userServiceUnavailable: false,
         unauthorized: false,
+        sessionChecked: true,
       });
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 401) {
-        set({ user: null, userServiceUnavailable: false, unauthorized: true });
+        set({
+          user: null,
+          userServiceUnavailable: false,
+          unauthorized: true,
+          sessionChecked: true,
+        });
         return;
       }
 
@@ -40,6 +50,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({
         user: null,
         unauthorized: false,
+        sessionChecked: true,
         userServiceUnavailable:
           isAxiosError(error) &&
           (error.response?.status === 503 || code === "USER_SERVICE_UNAVAILABLE"),

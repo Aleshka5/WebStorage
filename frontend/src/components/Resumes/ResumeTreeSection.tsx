@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { getApiErrorDetail } from "../../services/api";
 import {
   createResumeNode,
@@ -14,6 +14,7 @@ import { formatApiError, showErrorToast, showSuccessToast } from "../../utils/to
 import { Button } from "../ui/Button";
 import { ErrorMessage } from "../ui/ErrorMessage";
 import { Input } from "../ui/Input";
+import { LoadingBlock } from "../ui/LoadingBlock";
 import { Modal } from "../ui/Modal";
 
 interface ResumeTreeSectionProps {
@@ -198,28 +199,21 @@ export function ResumeTreeSection({
   }, [deleteTarget, loadItems]);
 
   const addButton = (
-    <Button type="button" variant="secondary" className="w-auto" onClick={() => setIsAddOpen(true)}>
-      <Plus size={16} className="mr-1.5" />
+    <Button type="button" variant="secondary" onClick={() => setIsAddOpen(true)}>
+      <Plus size={16} aria-hidden="true" />
       {addLabel}
     </Button>
   );
 
   if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <span className="h-8 w-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-      </div>
-    );
+    return <LoadingBlock active label={`Loading ${entityLabel}s…`} />;
   }
 
   if (loadErrorCode === "FILE_NOT_FOUND") {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-zinc-700 px-6 py-16 text-center">
+      <div className="error-block">
         <ErrorMessage errorCode="FILE_NOT_FOUND" message="This entry no longer exists" />
-        <Link
-          to="/resumes"
-          className="rounded-lg bg-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-100 transition-colors hover:bg-zinc-600"
-        >
+        <Link className="btn" to="/resumes">
           Back to Resumes
         </Link>
       </div>
@@ -227,44 +221,43 @@ export function ResumeTreeSection({
   }
 
   if (loadErrorCode) {
-    return <ErrorMessage errorCode={loadErrorCode} />;
+    return (
+      <div className="error-block">
+        <ErrorMessage errorCode={loadErrorCode} />
+      </div>
+    );
   }
 
   return (
-    <div className="flex min-h-0 flex-col gap-4">
+    <div className="tool">
       {toolbar}
 
       {items.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-zinc-700 px-6 py-16 text-center">
+        <div className="empty">
+          <p>{emptyMessage}</p>
           {addButton}
-          <p className="text-sm text-zinc-400">{emptyMessage}</p>
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {items.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-zinc-700 px-4 py-8 text-center text-sm text-zinc-400">
-              Nothing matches the current filter
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {items.map((item) => (
-                <li
-                  key={item.path}
-                  className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2.5"
-                >
-                  <Link
-                    to={buildItemHref(item)}
-                    className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-1 py-1 transition-colors hover:bg-zinc-800/70"
-                  >
-                    <span className="truncate text-sm font-medium text-zinc-100">{item.name}</span>
+        <div className="tool">
+          <ul className="choice-list">
+            {items.map((item, index) => (
+              <li key={item.path} className="choice choice-with-actions">
+                <Link to={buildItemHref(item)}>
+                  <span className="choice-num">{String(index + 1).padStart(2, "0")}</span>
+                  <span className="choice-body">
+                    <span className="choice-title">{item.name}</span>
                     {renderItemMeta?.(item)}
-                    <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-zinc-600" aria-hidden="true" />
-                  </Link>
+                  </span>
+                  <span className="choice-arrow" aria-hidden="true">
+                    →
+                  </span>
+                </Link>
+                <div className="cell-actions">
                   <button
                     type="button"
                     title="Rename"
                     aria-label={`Rename ${item.name}`}
-                    className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                    className="icon-btn"
                     onClick={() => {
                       setRenameTarget(item);
                       setRenameValue(item.name);
@@ -277,21 +270,21 @@ export function ResumeTreeSection({
                     type="button"
                     title="Delete"
                     aria-label={`Delete ${item.name}`}
-                    className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                    className="icon-btn danger"
                     onClick={() => setDeleteTarget(item)}
                   >
                     <Trash2 size={16} />
                   </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="flex">{addButton}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div>{addButton}</div>
         </div>
       )}
 
       <Modal isOpen={isAddOpen} onClose={closeAddDialog} title={addLabel}>
-        <form className="flex flex-col gap-4" onSubmit={handleCreate}>
+        <form className="stack" onSubmit={handleCreate}>
           <Input
             label={nameLabel}
             value={newName}
@@ -304,16 +297,13 @@ export function ResumeTreeSection({
             disabled={isCreating}
           />
           {statuses && (
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="new-vacancy-status" className="text-sm font-medium text-zinc-300">
-                Status
-              </label>
+            <div className="field">
+              <label htmlFor="new-vacancy-status">Status</label>
               <select
                 id="new-vacancy-status"
                 value={newStatusId}
                 onChange={(event) => setNewStatusId(event.target.value)}
                 disabled={isCreating}
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-800/80 px-3 py-2.5 text-sm text-zinc-100 transition-colors hover:border-zinc-600 focus:outline-none focus:ring-2 focus:ring-sky-500/50"
               >
                 <option value="">No status</option>
                 {statuses.map((status) => (
@@ -324,8 +314,8 @@ export function ResumeTreeSection({
               </select>
             </div>
           )}
-          {addError && <p className="text-xs text-red-400">{addError}</p>}
-          <div className="flex gap-2">
+          {addError && <p className="form-error">{addError}</p>}
+          <div className="actions">
             <Button type="button" variant="secondary" onClick={closeAddDialog} disabled={isCreating}>
               Cancel
             </Button>
@@ -345,7 +335,7 @@ export function ResumeTreeSection({
         }}
         title={`Rename ${entityLabel}`}
       >
-        <form className="flex flex-col gap-4" onSubmit={handleRename}>
+        <form className="stack" onSubmit={handleRename}>
           <Input
             label={nameLabel}
             value={renameValue}
@@ -357,8 +347,8 @@ export function ResumeTreeSection({
             autoFocus
             disabled={isRenaming}
           />
-          {renameError && <p className="text-xs text-red-400">{renameError}</p>}
-          <div className="flex gap-2">
+          {renameError && <p className="form-error">{renameError}</p>}
+          <div className="actions">
             <Button
               type="button"
               variant="secondary"
@@ -385,12 +375,12 @@ export function ResumeTreeSection({
       >
         {deleteTarget && (
           <>
-            <p className="mb-4 text-sm text-zinc-300">
+            <p>
               {`“${deleteTarget.name}” will be permanently deleted along with ${deleteTarget.child_count} ${
                 deleteTarget.child_count === 1 ? childLabelSingular : childLabelPlural
               } and every file inside.`}
             </p>
-            <div className="flex gap-2">
+            <div className="actions">
               <Button
                 type="button"
                 variant="secondary"

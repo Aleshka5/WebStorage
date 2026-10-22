@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Briefcase } from "lucide-react";
+import { PageFrame } from "../components/Layout/PageFrame";
 import { ResumeStatusBadge } from "../components/Resumes/ResumeStatusBadge";
 import {
   NO_STATUS_KEY,
@@ -8,6 +8,7 @@ import {
   type StatusFilterMode,
 } from "../components/Resumes/VacancyStatusFilter";
 import { ErrorMessage } from "../components/ui/ErrorMessage";
+import { LoadingBlock } from "../components/ui/LoadingBlock";
 import { getApiErrorDetail } from "../services/api";
 import { listAllVacancies, listResumeStatuses } from "../services/resumesApi";
 import type { ResumeStatus, VacancyListItem } from "../types/resumes";
@@ -66,110 +67,96 @@ export default function AllVacanciesPage() {
   }, [load]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold text-zinc-100">All vacancies</h2>
-        <Link
-          to="/resumes"
-          className="rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
-        >
-          Back to countries
+    <PageFrame
+      title="Vacancies"
+      kicker="Resumes"
+      lead="Every vacancy, across countries and companies."
+      actions={
+        <Link className="btn btn-ghost" to="/resumes">
+          Countries
         </Link>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto">
-        {isLoading ? (
-          <div className="flex justify-center py-12">
-            <span className="h-8 w-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-          </div>
-        ) : loadErrorCode ? (
+      }
+    >
+      {isLoading ? (
+        <LoadingBlock active label="Loading vacancies…" />
+      ) : loadErrorCode ? (
+        <div className="error-block">
           <ErrorMessage errorCode={loadErrorCode} />
-        ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-zinc-700 px-6 py-16 text-center">
-            <Briefcase className="h-8 w-8 text-zinc-600" aria-hidden="true" />
-            <p className="text-sm text-zinc-400">No vacancies yet</p>
-            <Link
-              to="/resumes"
-              className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-500"
-            >
-              Go to Resumes
-            </Link>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <VacancyStatusFilter
-              statuses={statuses}
-              mode={filterMode}
-              selected={selectedStatusKeys}
-              onModeChange={setFilterMode}
-              onSelectedChange={setSelectedStatusKeys}
-              matchedCount={visibleItems.length}
-              totalCount={items.length}
-            />
+          <button type="button" className="btn" onClick={() => void load()}>
+            Reload
+          </button>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="empty">
+          <p>No vacancies yet.</p>
+          <Link className="btn" to="/resumes">
+            Go to Resumes
+          </Link>
+        </div>
+      ) : (
+        <div className="tool">
+          <VacancyStatusFilter
+            statuses={statuses}
+            mode={filterMode}
+            selected={selectedStatusKeys}
+            onModeChange={setFilterMode}
+            onSelectedChange={setSelectedStatusKeys}
+            matchedCount={visibleItems.length}
+            totalCount={items.length}
+          />
 
-            {visibleItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-zinc-700 px-6 py-16 text-center">
-                <p className="text-sm text-zinc-400">No vacancies match this filter</p>
-                <button
-                  type="button"
-                  onClick={() => setSelectedStatusKeys([])}
-                  className="rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
-                >
-                  Clear filter
-                </button>
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-lg border border-zinc-800">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-zinc-900/80 text-xs uppercase tracking-wide text-zinc-500">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Country</th>
-                      <th className="px-4 py-3 font-medium">Company</th>
-                      <th className="px-4 py-3 font-medium">Vacancy</th>
-                      <th className="px-4 py-3 font-medium">Status</th>
+          {visibleItems.length === 0 ? (
+            <div className="empty">
+              <p>No vacancies match this filter.</p>
+              <button type="button" className="btn btn-ghost" onClick={() => setSelectedStatusKeys([])}>
+                Clear filter
+              </button>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Country</th>
+                    <th>Company</th>
+                    <th>Vacancy</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleItems.map((item) => (
+                    <tr key={item.path}>
+                      <td>
+                        <Link className="text-link" to={buildResumeRoute([item.country])}>
+                          {item.country}
+                        </Link>
+                      </td>
+                      <td>
+                        <Link className="text-link" to={buildResumeRoute([item.country, item.company])}>
+                          {item.company}
+                        </Link>
+                      </td>
+                      <td>
+                        <Link
+                          className="text-link"
+                          to={buildResumeRoute([item.country, item.company, item.name])}
+                        >
+                          {item.name}
+                        </Link>
+                      </td>
+                      <td>
+                        <ResumeStatusBadge
+                          status={item.status_id ? statusById.get(item.status_id) : undefined}
+                        />
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800">
-                    {visibleItems.map((item) => (
-                      <tr key={item.path} className="bg-zinc-950/40">
-                        <td className="px-4 py-3">
-                          <Link
-                            to={buildResumeRoute([item.country])}
-                            className="rounded text-zinc-300 transition-colors hover:text-sky-400"
-                          >
-                            {item.country}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-3">
-                          <Link
-                            to={buildResumeRoute([item.country, item.company])}
-                            className="rounded text-zinc-300 transition-colors hover:text-sky-400"
-                          >
-                            {item.company}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-3">
-                          <Link
-                            to={buildResumeRoute([item.country, item.company, item.name])}
-                            className="rounded font-medium text-zinc-100 transition-colors hover:text-sky-400"
-                          >
-                            {item.name}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-3">
-                          <ResumeStatusBadge
-                            status={item.status_id ? statusById.get(item.status_id) : undefined}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </PageFrame>
   );
 }

@@ -10,11 +10,10 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   if (!user) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
+      <div className="error-block">
         <ErrorMessage
           errorCode="UNAUTHORIZED"
           message="Open this site through the hub. Storage does not handle sign-in."
-          className="text-center"
         />
       </div>
     );

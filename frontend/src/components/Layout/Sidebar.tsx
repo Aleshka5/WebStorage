@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useState, type ComponentType } from "react";
 import { NavLink } from "react-router-dom";
 import {
   Briefcase,
@@ -14,8 +14,6 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
 import { StorageUsageBar } from "./StorageUsageBar";
-
-const STORAGE_KEY = "homecloud-sidebar-expanded";
 
 interface MenuItem {
   to: string;
@@ -50,88 +48,37 @@ function isMenuItemVisible(to: string, role: string | undefined): boolean {
   return true;
 }
 
-function readExpandedState(): boolean {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === null) return true;
-    return stored === "true";
-  } catch {
-    return true;
-  }
-}
-
 export function Sidebar() {
   const user = useAuthStore((state) => state.user);
-  const [expanded, setExpanded] = useState(readExpandedState);
+  const [expanded, setExpanded] = useState(true);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, String(expanded));
-    } catch {
-      // ignore write errors
-    }
-  }, [expanded]);
-
-  const toggle = () => setExpanded((prev) => !prev);
   const visibleItems = MENU_ITEMS.filter(({ to }) => isMenuItemVisible(to, user?.role));
 
   return (
-    <aside
-      className={[
-        "flex shrink-0 flex-col border-r border-zinc-800 bg-zinc-900 transition-[width] duration-300 ease-in-out",
-        expanded ? "w-60" : "w-16",
-      ].join(" ")}
-    >
-      <div className="flex items-center justify-end p-2">
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-        >
-          {expanded ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
-        </button>
-      </div>
+    <aside className={["side", expanded ? "" : "is-collapsed"].filter(Boolean).join(" ")}>
+      <button
+        type="button"
+        className="icon-btn side-toggle"
+        onClick={() => setExpanded((prev) => !prev)}
+        aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
+      >
+        {expanded ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
+      </button>
 
-      <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2">
+      <nav className="side-nav" aria-label="Storage">
         {visibleItems.map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            title={expanded ? undefined : label}
-            className={({ isActive }) =>
-              [
-                "group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-sky-600/20 text-sky-400"
-                  : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
-                expanded ? "" : "justify-center px-0",
-              ].join(" ")
-            }
-          >
-            <Icon size={20} className="shrink-0" />
-            <span
-              className={[
-                "whitespace-nowrap transition-opacity duration-300",
-                expanded ? "opacity-100" : "pointer-events-none w-0 overflow-hidden opacity-0",
-              ].join(" ")}
-            >
-              {label}
-            </span>
-
-            {!expanded && (
-              <span
-                role="tooltip"
-                className="pointer-events-none absolute left-full z-50 ml-2 hidden whitespace-nowrap rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-100 shadow-lg group-hover:block"
-              >
-                {label}
-              </span>
-            )}
+          <NavLink key={to} to={to} title={label} className="side-link">
+            <Icon size={18} aria-hidden="true" />
+            <span className="side-label">{label}</span>
           </NavLink>
         ))}
       </nav>
 
-      {expanded && <StorageUsageBar />}
+      {expanded ? (
+        <div className="side-foot">
+          <StorageUsageBar />
+        </div>
+      ) : null}
     </aside>
   );
 }

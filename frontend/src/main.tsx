@@ -10,22 +10,32 @@ createRoot(document.getElementById("root")!).render(
     <Toaster
       position="bottom-right"
       toastOptions={{
-        className: "text-sm",
+        className: "banner",
         style: {
-          background: "#18181b",
-          color: "#f4f4f5",
-          border: "1px solid #3f3f46",
+          background: "var(--paper-raised)",
+          color: "var(--ink)",
+          border: "1px solid var(--rule)",
+          borderRadius: 0,
+          boxShadow: "none",
+          fontFamily: "var(--sans)",
         },
         success: {
           iconTheme: {
-            primary: "#38bdf8",
-            secondary: "#18181b",
+            primary: "var(--accent-text)",
+            secondary: "var(--paper-raised)",
           },
         },
         error: {
+          style: {
+            background: "var(--danger-wash)",
+            color: "var(--danger)",
+            border: "1px solid var(--danger)",
+            borderRadius: 0,
+            boxShadow: "none",
+          },
           iconTheme: {
-            primary: "#f87171",
-            secondary: "#18181b",
+            primary: "var(--danger)",
+            secondary: "var(--danger-wash)",
           },
         },
       }}

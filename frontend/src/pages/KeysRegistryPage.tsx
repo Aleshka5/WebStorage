@@ -1,10 +1,12 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Copy, Plus, Trash2 } from "lucide-react";
+import { PageFrame } from "../components/Layout/PageFrame";
 import { PrivateUnlockModal } from "../components/PrivateUnlockModal";
 import { Button } from "../components/ui/Button";
 import { ErrorMessage } from "../components/ui/ErrorMessage";
 import { Input } from "../components/ui/Input";
+import { LoadingBlock } from "../components/ui/LoadingBlock";
 import { Modal } from "../components/ui/Modal";
 import { usePrivateSession } from "../hooks/usePrivateSession";
 import { getApiErrorDetail } from "../services/api";
@@ -140,30 +142,25 @@ export default function KeysRegistryPage() {
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <span className="h-8 w-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-      </div>
+      <PageFrame title="Keys" lead="Names and secrets kept with the private passphrase.">
+        <LoadingBlock active label="Loading keys…" />
+      </PageFrame>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold text-zinc-100">Keys Registry</h2>
-        {isActive && (
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-auto"
-              onClick={() => setIsAddOpen(true)}
-            >
-              <Plus size={16} className="mr-1.5" />
+    <PageFrame
+      title="Keys"
+      lead="Names and secrets kept with the private passphrase."
+      actions={
+        isActive ? (
+          <div className="actions">
+            <Button type="button" variant="secondary" onClick={() => setIsAddOpen(true)}>
+              <Plus size={16} aria-hidden="true" />
               Add key
             </Button>
             <Button
               type="button"
-              className="w-auto"
               disabled={isPristine || isSaving}
               isLoading={isSaving}
               onClick={() => {
@@ -173,56 +170,52 @@ export default function KeysRegistryPage() {
               Save
             </Button>
           </div>
-        )}
-      </div>
-
+        ) : undefined
+      }
+    >
       {isActive && (
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div>
           {isFetching ? (
-            <div className="flex justify-center py-12">
-              <span className="h-8 w-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-            </div>
+            <LoadingBlock active label="Loading keys…" />
           ) : loadError ? (
-            <ErrorMessage errorCode={loadError} />
+            <div className="error-block">
+              <ErrorMessage errorCode={loadError} />
+              <Button type="button" onClick={() => void loadRegistry()}>
+                Reload
+              </Button>
+            </div>
           ) : keys.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-zinc-700 px-6 py-16 text-center">
-              <p className="text-sm text-zinc-400">No keys yet</p>
-              <Button
-                type="button"
-                variant="secondary"
-                className="w-auto"
-                onClick={() => setIsAddOpen(true)}
-              >
-                <Plus size={16} className="mr-1.5" />
+            <div className="empty">
+              <p>No keys yet.</p>
+              <Button type="button" variant="secondary" onClick={() => setIsAddOpen(true)}>
+                <Plus size={16} aria-hidden="true" />
                 Add key
               </Button>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-lg border border-zinc-800">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-zinc-900/80 text-xs uppercase tracking-wide text-zinc-500">
+            <div className="table-wrap">
+              <table>
+                <thead>
                   <tr>
-                    <th className="px-4 py-3 font-medium">Key name</th>
-                    <th className="px-4 py-3 font-medium">Value</th>
-                    <th className="px-4 py-3 font-medium">
+                    <th>Key name</th>
+                    <th>Value</th>
+                    <th>
                       <span className="sr-only">Actions</span>
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800">
+                <tbody>
                   {keys.map((key) => (
-                    <tr key={key.name} className="bg-zinc-950/40">
-                      <td className="px-4 py-3 font-medium text-zinc-100">{key.name}</td>
-                      <td className="px-4 py-3 font-mono text-zinc-400">
-                        {maskKeyValue(key.value)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-1">
+                    <tr key={key.name}>
+                      <td>{key.name}</td>
+                      <td className="meta-code">{maskKeyValue(key.value)}</td>
+                      <td>
+                        <div className="cell-actions">
                           <button
                             type="button"
                             title="Copy value"
                             aria-label={`Copy ${key.name}`}
-                            className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                            className="icon-btn"
                             onClick={() => {
                               void handleCopy(key.value);
                             }}
@@ -233,7 +226,7 @@ export default function KeysRegistryPage() {
                             type="button"
                             title="Delete key"
                             aria-label={`Delete ${key.name}`}
-                            className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                            className="icon-btn danger"
                             onClick={() => handleDelete(key.name)}
                           >
                             <Trash2 size={16} />
@@ -256,7 +249,7 @@ export default function KeysRegistryPage() {
       />
 
       <Modal isOpen={isAddOpen} onClose={closeAddModal} title="Add key">
-        <form className="flex flex-col gap-4" onSubmit={handleAdd}>
+        <form className="stack" onSubmit={handleAdd}>
           <Input
             label="Key name"
             value={newName}
@@ -276,8 +269,8 @@ export default function KeysRegistryPage() {
             }}
             autoComplete="off"
           />
-          {addError && <p className="text-xs text-red-400">{addError}</p>}
-          <div className="flex gap-2">
+          {addError && <p className="form-error">{addError}</p>}
+          <div className="actions">
             <Button type="button" variant="secondary" onClick={closeAddModal}>
               Cancel
             </Button>
@@ -285,6 +278,6 @@ export default function KeysRegistryPage() {
           </div>
         </form>
       </Modal>
-    </div>
+    </PageFrame>
   );
 }

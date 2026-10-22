@@ -2,7 +2,9 @@ import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { DeleteGeneratedDialog } from "../components/Generated/DeleteGeneratedDialog";
+import { PageFrame } from "../components/Layout/PageFrame";
 import { ErrorMessage } from "../components/ui/ErrorMessage";
+import { LoadingBlock } from "../components/ui/LoadingBlock";
 import { getApiErrorDetail } from "../services/api";
 import { deleteGenerated, listGenerated } from "../services/generatedApi";
 import { useQuotaStore } from "../store/quota";
@@ -72,45 +74,46 @@ export default function GeneratedImagesPage() {
   }, [fetchQuota, pendingDelete]);
 
   return (
-    <div className="flex min-h-0 flex-col gap-4">
-      <h2 className="text-xl font-semibold text-zinc-100">Generated Images</h2>
-
-      {listErrorCode && <ErrorMessage errorCode={listErrorCode} />}
+    <PageFrame title="Generated" lead="Images made for this account.">
+      {listErrorCode && (
+        <div className="error-block">
+          <ErrorMessage errorCode={listErrorCode} />
+          <button type="button" className="btn" onClick={() => void loadItems()}>
+            Reload
+          </button>
+        </div>
+      )}
 
       {isLoading ? (
-        <div className="flex justify-center py-12" aria-live="polite">
-          <span
-            className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-600 border-t-sky-500"
-            aria-label="Loading"
-          />
-        </div>
+        <LoadingBlock active label="Loading generated images…" />
       ) : items.length === 0 && !listErrorCode ? (
-        <p className="py-12 text-center text-zinc-500">No generated images yet.</p>
+        <p className="empty">No generated images yet.</p>
       ) : (
-        <ul className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50">
-          {items.map((item) => {
+        <ul className="choice-list">
+          {items.map((item, index) => {
             const label = formatDateTime(item.created_at);
+            const number = String(index + 1).padStart(2, "0");
 
             return (
-              <li
-                key={item.id}
-                className="flex items-center gap-2 border-b border-zinc-800/80 last:border-b-0"
-              >
-                <Link
-                  to={`/generated/${item.id}`}
-                  className="min-w-0 flex-1 px-4 py-3 transition-colors hover:bg-zinc-800/40"
-                >
-                  <p className="text-sm font-medium text-zinc-100">{label}</p>
-                  <p className="truncate text-sm text-zinc-400">{item.prompt}</p>
+              <li key={item.id} className="choice choice-with-actions">
+                <Link to={`/generated/${item.id}`}>
+                  <span className="choice-num">{number}</span>
+                  <span className="choice-body">
+                    <span className="choice-title">{label}</span>
+                    <span className="choice-teaser">{item.prompt}</span>
+                  </span>
+                  <span className="choice-arrow" aria-hidden="true">
+                    →
+                  </span>
                 </Link>
                 <button
                   type="button"
                   title="Delete"
                   aria-label={`Delete ${label}`}
                   onClick={() => handleRequestDelete(item)}
-                  className="mr-2 rounded-md p-2 text-zinc-400 transition-colors hover:bg-red-900/40 hover:text-red-300"
+                  className="icon-btn danger"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 size={16} />
                 </button>
               </li>
             );
@@ -128,6 +131,6 @@ export default function GeneratedImagesPage() {
           void handleConfirmDelete();
         }}
       />
-    </div>
+    </PageFrame>
   );
 }

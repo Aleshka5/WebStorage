@@ -98,5 +98,5 @@ export function ErrorMessage({
     message,
   );
 
-  return <p className={`text-sm text-red-400 ${className}`.trim()}>{text}</p>;
+  return <p className={["banner", "error", className].filter(Boolean).join(" ")}>{text}</p>;
 }

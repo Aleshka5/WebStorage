@@ -7,12 +7,9 @@ export function ResumesGuard() {
 
   if (role !== "FAMILY" && role !== "ADMIN") {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+      <div className="error-block">
         <ErrorMessage errorCode="ACCESS_DENIED" />
-        <Link
-          to="/files"
-          className="rounded-lg bg-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-100 transition-colors hover:bg-zinc-600"
-        >
+        <Link className="btn" to="/files">
           Back to Files
         </Link>
       </div>

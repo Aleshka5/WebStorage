@@ -34,24 +34,15 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="overlay"
       role="dialog"
       aria-modal="true"
       aria-labelledby={title ? "modal-title" : undefined}
     >
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <div className="relative z-10 w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">
-        {title && (
-          <h2 id="modal-title" className="mb-3 text-lg font-semibold text-zinc-100">
-            {title}
-          </h2>
-        )}
-        {children}
+      <button type="button" className="overlay-dismiss" aria-label="Close" onClick={onClose} />
+      <div className="panel">
+        {title && <h2 id="modal-title">{title}</h2>}
+        <div className="stack">{children}</div>
       </div>
     </div>
   );

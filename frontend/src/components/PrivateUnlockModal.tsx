@@ -1,6 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
 import { isAxiosError } from "axios";
-import { Lock } from "lucide-react";
 import { resetPrivateStorage, unlockPrivate } from "../services/privateApi";
 import { getApiErrorDetail } from "../services/api";
 import { getErrorMessage } from "./ui/ErrorMessage";
@@ -79,10 +78,16 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
         setIsRateLimited(true);
       } else {
         const detail = getApiErrorDetail(err);
-        setError(getErrorMessage(detail?.error_code, {
-          available_bytes: detail?.available_bytes,
-          retry_after: detail?.retry_after,
-        }, detail?.message ?? "Failed to unlock this section"));
+        setError(
+          getErrorMessage(
+            detail?.error_code,
+            {
+              available_bytes: detail?.available_bytes,
+              retry_after: detail?.retry_after,
+            },
+            detail?.message ?? "Failed to unlock this section",
+          ),
+        );
       }
     } finally {
       setIsSubmitting(false);
@@ -113,29 +118,13 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="private-unlock-title"
-    >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-hidden="true" />
-      <div className="relative z-10 w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400">
-            <Lock className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <div>
-            <h2 id="private-unlock-title" className="text-lg font-semibold text-zinc-100">
-              Private section
-            </h2>
-            <p className="text-sm text-zinc-400">
-              {hint ?? "Enter your passphrase to unlock"}
-            </p>
-          </div>
-        </div>
-
-        <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+    <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="private-unlock-title">
+      <div className="overlay-dismiss" aria-hidden="true" />
+      <div className="panel stack">
+        <p className="kicker">Storage</p>
+        <h2 id="private-unlock-title">Private section</h2>
+        <p className="muted">{hint ?? "Enter your passphrase to unlock"}</p>
+        <form className="stack" onSubmit={handleSubmit}>
           <Input
             label="Passphrase"
             type="password"
@@ -151,7 +140,7 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
             disabled={isBusy}
             autoComplete="off"
           />
-          <div className="flex gap-2">
+          <div className="actions">
             <Button type="button" variant="secondary" onClick={onCancel} disabled={isBusy}>
               Cancel
             </Button>
@@ -163,7 +152,6 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
             <Button
               type="button"
               variant="danger"
-              className="w-full"
               onClick={handleReset}
               isLoading={isResetting}
               disabled={isSubmitting}
