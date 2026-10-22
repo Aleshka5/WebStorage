@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Download, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { downloadPhotoOriginal } from "../../services/photosApi";
 import type { PhotoItem } from "../../types/photos";
+import { ViewportPortal } from "../ui/ViewportPortal";
 
 interface LightboxProps {
   photos: PhotoItem[];
@@ -74,70 +75,74 @@ export function Lightbox({ photos, currentIndex, onClose, onNavigate }: Lightbox
   }
 
   return (
-    <div className="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer">
-      <div className="lightbox-bar top">
-        <button type="button" className="btn btn-ghost" onClick={onClose}>
-          <X size={18} aria-hidden="true" />
-          Close
-        </button>
-      </div>
+    <ViewportPortal>
+      <div className="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer">
+        <button type="button" className="overlay-dismiss" aria-label="Close" onClick={onClose} />
 
-      {hasPrevious && (
-        <button
-          type="button"
-          className="btn btn-ghost lightbox-nav prev"
-          onClick={handlePrevious}
-          aria-label="Previous photo"
-        >
-          <ChevronLeft size={18} aria-hidden="true" />
-        </button>
-      )}
+        <div className="lightbox-bar top">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+            Close
+          </button>
+        </div>
 
-      {hasNext && (
-        <button
-          type="button"
-          className="btn btn-ghost lightbox-nav next"
-          onClick={handleNext}
-          aria-label="Next photo"
-        >
-          <ChevronRight size={18} aria-hidden="true" />
-        </button>
-      )}
-
-      <figure className="lightbox-figure">
-        {!isImageLoaded && (
-          <div className="skeleton" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </div>
+        {hasPrevious && (
+          <button
+            type="button"
+            className="btn btn-ghost lightbox-nav prev"
+            onClick={handlePrevious}
+            aria-label="Previous photo"
+          >
+            <ChevronLeft size={18} aria-hidden="true" />
+          </button>
         )}
-        <img
-          key={photo.id}
-          src={photo.original_url}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          style={{ opacity: isImageLoaded ? 1 : 0 }}
-          onLoad={() => setIsImageLoaded(true)}
-          draggable={false}
-        />
-      </figure>
 
-      <div className="lightbox-bar bottom">
-        <p className="muted">
-          {currentIndex + 1} / {photos.length}
-        </p>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => void handleDownload()}
-          disabled={isDownloading}
-        >
-          <Download size={18} aria-hidden="true" />
-          {isDownloading ? "Downloading…" : "Download"}
-        </button>
+        {hasNext && (
+          <button
+            type="button"
+            className="btn btn-ghost lightbox-nav next"
+            onClick={handleNext}
+            aria-label="Next photo"
+          >
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+        )}
+
+        <figure className="lightbox-figure">
+          {!isImageLoaded && (
+            <div className="skeleton" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+          )}
+          <img
+            key={photo.id}
+            src={photo.original_url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            style={{ opacity: isImageLoaded ? 1 : 0 }}
+            onLoad={() => setIsImageLoaded(true)}
+            draggable={false}
+          />
+        </figure>
+
+        <div className="lightbox-bar bottom">
+          <p className="muted">
+            {currentIndex + 1} / {photos.length}
+          </p>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => void handleDownload()}
+            disabled={isDownloading}
+          >
+            <Download size={18} aria-hidden="true" />
+            {isDownloading ? "Downloading…" : "Download"}
+          </button>
+        </div>
       </div>
-    </div>
+    </ViewportPortal>
   );
 }

@@ -124,12 +124,6 @@
   gap: var(--s2);
 }
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s2);
-}
-
 .crumbs {
   display: flex;
   flex-wrap: wrap;
@@ -331,34 +325,6 @@ td:has(.banner) {
   font-size: var(--step--1);
 }
 
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--s4);
-}
-
-.overlay-dismiss {
-  position: absolute;
-  inset: 0;
-  border: 0;
-  background: color-mix(in srgb, var(--ink) 28%, transparent);
-  cursor: pointer;
-}
-
-.overlay .panel {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-}
-
-.overlay .panel > h2 {
-  margin-bottom: var(--s4);
-}
-
 .photo-grid {
   display: grid;
   gap: var(--s1);
@@ -422,30 +388,60 @@ td:has(.banner) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--s6);
-  background: var(--paper);
+  padding: var(--s6) calc(2.75rem + var(--s6));
 }
 
 .lightbox-figure {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0;
+  min-width: 0;
+  min-height: 0;
   max-width: 100%;
-  max-height: 100%;
+  max-height: calc(100svh - 9rem);
   background: var(--paper-raised);
   border: 1px solid var(--rule);
-  padding: var(--s4);
+  padding: var(--s3);
+}
+
+.lightbox-figure .skeleton {
+  min-height: 8rem;
+  width: min(18rem, 70vw);
 }
 
 .lightbox-figure img {
   display: block;
+  width: auto;
+  height: auto;
   max-width: 100%;
-  max-height: calc(100svh - var(--s8) - var(--s8));
+  max-height: calc(100svh - 11rem);
   object-fit: contain;
+}
+
+.lightbox-bar,
+.lightbox-nav {
+  z-index: 1;
+}
+
+.lightbox .btn-ghost {
+  background: var(--paper-raised);
+}
+
+.lightbox .btn-ghost:hover {
+  background: var(--chip);
 }
 
 .lightbox-bar {
   position: absolute;
   display: flex;
   gap: var(--s2);
+  align-items: center;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  padding: var(--s2);
 }
 
 .lightbox-bar.top {
@@ -458,7 +454,11 @@ td:has(.banner) {
   left: var(--s4);
   right: var(--s4);
   justify-content: space-between;
-  align-items: center;
+}
+
+.lightbox-bar .muted {
+  margin: 0;
+  padding: 0 var(--s2);
 }
 
 .lightbox-nav {

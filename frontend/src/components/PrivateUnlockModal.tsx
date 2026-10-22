@@ -5,6 +5,7 @@ import { getApiErrorDetail } from "../services/api";
 import { getErrorMessage } from "./ui/ErrorMessage";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
+import { ViewportPortal } from "./ui/ViewportPortal";
 
 interface PrivateUnlockModalProps {
   isOpen: boolean;
@@ -118,7 +119,8 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
   }
 
   return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="private-unlock-title">
+    <ViewportPortal>
+      <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="private-unlock-title">
       <div className="overlay-dismiss" aria-hidden="true" />
       <div className="panel stack">
         <p className="kicker">Storage</p>
@@ -161,6 +163,7 @@ export function PrivateUnlockModal({ isOpen, onSuccess, onCancel }: PrivateUnloc
           )}
         </form>
       </div>
-    </div>
+      </div>
+    </ViewportPortal>
   );
 }

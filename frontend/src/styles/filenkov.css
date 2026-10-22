@@ -643,6 +643,41 @@ h3 { font-size: var(--step-2); }
   max-width: 28rem;
 }
 
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s4);
+}
+
+.overlay-dismiss {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border: 0;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  cursor: pointer;
+}
+
+.overlay .panel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+}
+
+.overlay .panel > h2 {
+  margin-bottom: var(--s4);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
 .auth-page {
   display: grid;
   place-items: start;
