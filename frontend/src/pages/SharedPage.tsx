@@ -1,5 +1,6 @@
 import { Navigate } from "react-router-dom";
 import { FileManager } from "../components/FileManager/FileManager";
+import { PageFrame } from "../components/Layout/PageFrame";
 import { useAuthStore } from "../store/auth";
 
 export default function SharedPage() {
@@ -10,11 +11,8 @@ export default function SharedPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <h2 className="text-xl font-semibold text-zinc-100">Shared</h2>
-      <div className="min-h-0 flex-1">
-        <FileManager apiPrefix="/api/shared" mode="plain" />
-      </div>
-    </div>
+    <PageFrame title="Shared" lead="Files the family can open together.">
+      <FileManager apiPrefix="/api/shared" mode="plain" />
+    </PageFrame>
   );
 }

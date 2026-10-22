@@ -1,5 +1,6 @@
 import { Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PageFrame } from "../components/Layout/PageFrame";
 import { PhotoGrid } from "../components/PhotoGrid/PhotoGrid";
 import { PhotoUploadFab } from "../components/PhotoGrid/PhotoUploadFab";
 import { Button } from "../components/ui/Button";
@@ -163,49 +164,25 @@ export default function PhotosPage() {
   }, [selectedIds.size, selectionMode]);
 
   return (
-    <div className="flex min-h-0 flex-col gap-4">
-      <h2 className="text-xl font-semibold text-zinc-100">Photos</h2>
-
+    <PageFrame title="Photos" lead="Pictures in this account, newest first.">
       {selectionMode && (
-        <div
-          className={[
-            "sticky top-0 z-30 -mx-6 flex flex-wrap items-center justify-between gap-3",
-            "border-b border-zinc-800 bg-zinc-950/95 px-6 py-3 backdrop-blur-sm",
-          ].join(" ")}
-        >
-          <span className="text-sm font-medium text-zinc-200">
-            Selected: {selectedIds.size}
-          </span>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-auto px-3"
-              disabled={allPhotosSelected}
-              onClick={handleSelectAll}
-            >
+        <div className="selection-bar">
+          <span>Selected: {selectedIds.size}</span>
+          <div className="actions">
+            <Button type="button" variant="secondary" disabled={allPhotosSelected} onClick={handleSelectAll}>
               Select all
             </Button>
             <Button
               type="button"
               variant="danger"
-              className="w-auto px-3"
               disabled={selectedIds.size === 0}
               onClick={() => setIsDeleteModalOpen(true)}
             >
-              <span className="inline-flex items-center gap-2">
-                <Trash2 className="h-4 w-4" />
-                Delete
-              </span>
+              <Trash2 size={16} aria-hidden="true" />
+              Delete
             </Button>
-            <button
-              type="button"
-              onClick={handleExitSelectionMode}
-              className="rounded p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-              aria-label="Cancel selection"
-            >
-              <X className="h-5 w-5" />
+            <button type="button" onClick={handleExitSelectionMode} className="icon-btn" aria-label="Cancel selection">
+              <X size={18} />
             </button>
           </div>
         </div>
@@ -243,12 +220,12 @@ export default function PhotosPage() {
         }}
         title="Delete photos?"
       >
-        <p className="mb-4 text-sm text-zinc-300">
+        <p>
           {selectedIds.size === 1
             ? "The selected photo will be permanently deleted."
             : `The selected photos (${selectedIds.size}) will be permanently deleted.`}
         </p>
-        <div className="flex gap-2">
+        <div className="actions">
           <Button
             type="button"
             variant="secondary"
@@ -269,6 +246,6 @@ export default function PhotosPage() {
           </Button>
         </div>
       </Modal>
-    </div>
+    </PageFrame>
   );
 }

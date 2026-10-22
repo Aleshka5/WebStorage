@@ -346,28 +346,23 @@ export function FileManager({ apiPrefix, mode, basePath, hiddenNames }: FileMana
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm text-zinc-400">
+    <div className="tool">
+      <div className="toolbar">
+        <div className="cluster">
           {mode === "encrypted" && (
-            <span className="inline-flex items-center gap-1 rounded-md bg-violet-900/40 px-2 py-1 text-xs text-violet-300">
-              <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="tag">
+              <Lock size={14} aria-hidden="true" />
               Encrypted
             </span>
           )}
-          <nav aria-label="Folder navigation" className="flex flex-wrap items-center gap-1">
+          <nav aria-label="Folder navigation" className="crumbs">
             {breadcrumbs.map((crumb, index) => (
-              <span key={crumb.path} className="inline-flex items-center gap-1">
-                {index > 0 && (
-                  <ChevronRight className="h-4 w-4 text-zinc-600" aria-hidden="true" />
-                )}
+              <span key={crumb.path} className="cluster">
+                {index > 0 && <ChevronRight size={14} aria-hidden="true" />}
                 <button
                   type="button"
                   onClick={() => setCurrentPath(crumb.path)}
-                  className={[
-                    "rounded px-1.5 py-0.5 transition-colors hover:bg-zinc-800 hover:text-zinc-100",
-                    crumb.path === currentPath ? "text-zinc-100" : "text-zinc-400",
-                  ].join(" ")}
+                  className={crumb.path === currentPath ? "is-current" : undefined}
                 >
                   {crumb.label}
                 </button>
@@ -376,12 +371,12 @@ export function FileManager({ apiPrefix, mode, basePath, hiddenNames }: FileMana
           </nav>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="actions">
           <input
             ref={fileInputRef}
             type="file"
             multiple
-            className="hidden"
+            className="file-input"
             onChange={(event) => {
               const selectedFiles = Array.from(event.target.files ?? []);
               if (selectedFiles.length > 0) {
@@ -394,7 +389,7 @@ export function FileManager({ apiPrefix, mode, basePath, hiddenNames }: FileMana
             ref={zipFileInputRef}
             type="file"
             accept=".zip"
-            className="hidden"
+            className="file-input"
             onChange={(event) => {
               const selectedFile = event.target.files?.[0];
               if (selectedFile) {
@@ -403,39 +398,22 @@ export function FileManager({ apiPrefix, mode, basePath, hiddenNames }: FileMana
               event.target.value = "";
             }}
           />
-          <Button
-            type="button"
-            variant="secondary"
-            className="w-auto px-3"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Upload className="h-4 w-4" />
-              Upload
-            </span>
+          <Button type="button" onClick={() => fileInputRef.current?.click()}>
+            <Upload size={16} aria-hidden="true" />
+            Upload
           </Button>
           <Button
             type="button"
             variant="secondary"
-            className="w-auto px-3"
             onClick={() => zipFileInputRef.current?.click()}
             disabled={isUploadingZip}
           >
-            <span className="inline-flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              Upload folder
-            </span>
+            <Package size={16} aria-hidden="true" />
+            Upload folder
           </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            className="w-auto px-3"
-            onClick={() => setIsCreateFolderOpen(true)}
-          >
-            <span className="inline-flex items-center gap-2">
-              <FolderPlus className="h-4 w-4" />
-              New folder
-            </span>
+          <Button type="button" variant="secondary" onClick={() => setIsCreateFolderOpen(true)}>
+            <FolderPlus size={16} aria-hidden="true" />
+            New folder
           </Button>
         </div>
       </div>
@@ -443,41 +421,31 @@ export function FileManager({ apiPrefix, mode, basePath, hiddenNames }: FileMana
       {listErrorCode && <ErrorMessage errorCode={listErrorCode} />}
 
       {uploads.length > 0 && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium text-zinc-200">Uploading files</p>
-            <button
-              type="button"
-              onClick={clearFinished}
-              className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-              aria-label="Hide completed"
-            >
-              <X className="h-4 w-4" />
+        <div className="surface">
+          <div className="toolbar">
+            <p>Uploading files</p>
+            <button type="button" onClick={clearFinished} className="icon-btn" aria-label="Hide completed">
+              <X size={16} />
             </button>
           </div>
-          <ul className="space-y-2">
+          <ul className="stack-tight">
             {uploads.map((upload) => (
-              <li key={upload.id} className="text-sm">
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <span className="truncate text-zinc-300">{upload.name}</span>
-                  <span className="shrink-0 text-xs text-zinc-500">
+              <li key={upload.id}>
+                <div className="toolbar">
+                  <span>{upload.name}</span>
+                  <span className="muted nowrap">
                     {upload.status === "uploading" &&
-                      (upload.progress >= 100 ? "Saving..." : `${upload.progress}%`)}
+                      (upload.progress >= 100 ? "Saving…" : `${upload.progress}%`)}
                     {upload.status === "done" && "Done"}
                     {upload.status === "error" && "Error"}
                   </span>
                 </div>
                 {upload.status === "uploading" && (
-                  <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
-                    <div
-                      className="h-full rounded-full bg-sky-500 transition-all"
-                      style={{ width: `${upload.progress}%` }}
-                    />
+                  <div className="meter" aria-hidden="true">
+                    <span style={{ width: `${upload.progress}%` }} />
                   </div>
                 )}
-                {upload.status === "error" && (
-                  <ErrorMessage errorCode={upload.error_code} className="text-xs" />
-                )}
+                {upload.status === "error" && <ErrorMessage errorCode={upload.error_code} />}
               </li>
             ))}
           </ul>
@@ -485,46 +453,41 @@ export function FileManager({ apiPrefix, mode, basePath, hiddenNames }: FileMana
       )}
 
       {zipUploadProgress && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium text-zinc-200">Uploading folder</p>
+        <div className="surface">
+          <div className="toolbar">
+            <p>Uploading folder</p>
             {zipUploadProgress.status === "done" && (
               <button
                 type="button"
                 onClick={() => setZipUploadProgress(null)}
-                className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                className="icon-btn"
                 aria-label="Hide"
               >
-                <X className="h-4 w-4" />
+                <X size={16} />
               </button>
             )}
           </div>
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="truncate text-zinc-300">{zipUploadProgress.name}</span>
-            <span className="shrink-0 text-xs text-zinc-500">
+          <div className="toolbar">
+            <span>{zipUploadProgress.name}</span>
+            <span className="muted nowrap">
               {zipUploadProgress.status === "uploading" &&
-                (zipUploadProgress.progress >= 100
-                  ? "Saving..."
-                  : `${zipUploadProgress.progress}%`)}
+                (zipUploadProgress.progress >= 100 ? "Saving…" : `${zipUploadProgress.progress}%`)}
               {zipUploadProgress.status === "done" && "Done"}
               {zipUploadProgress.status === "error" && "Error"}
             </span>
           </div>
           {zipUploadProgress.status === "uploading" && (
-            <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
-              <div
-                className="h-full rounded-full bg-sky-500 transition-all"
-                style={{ width: `${zipUploadProgress.progress}%` }}
-              />
+            <div className="meter" aria-hidden="true">
+              <span style={{ width: `${zipUploadProgress.progress}%` }} />
             </div>
           )}
           {zipUploadProgress.status === "done" && zipUploadProgress.files !== undefined && (
-            <p className="mt-2 text-xs text-zinc-400">
+            <p className="muted">
               Extracted {zipUploadProgress.files} files into {zipUploadProgress.dirs} folders
             </p>
           )}
           {zipUploadProgress.status === "error" && zipUploadProgress.error && (
-            <ErrorMessage errorCode={zipUploadProgress.error} className="text-xs" />
+            <ErrorMessage message={zipUploadProgress.error} />
           )}
         </div>
       )}
@@ -560,12 +523,12 @@ export function FileManager({ apiPrefix, mode, basePath, hiddenNames }: FileMana
       >
         {itemToDelete && (
           <>
-            <p className="mb-4 text-sm text-zinc-300">
+            <p>
               {itemToDelete.is_dir
                 ? `Folder “${itemToDelete.name}” and all of its contents will be permanently deleted.`
                 : `File “${itemToDelete.name}” will be permanently deleted.`}
             </p>
-            <div className="flex gap-2">
+            <div className="actions">
               <Button
                 type="button"
                 variant="secondary"

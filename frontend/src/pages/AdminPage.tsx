@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
+import { PageFrame } from "../components/Layout/PageFrame";
 import { Button } from "../components/ui/Button";
+import { LoadingBlock } from "../components/ui/LoadingBlock";
 import {
   blockUser,
   deleteUser,
@@ -45,14 +47,12 @@ function diskStatusLabel(status: string): string {
 
 function diskStatusClass(status: string): string {
   switch (status) {
-    case "HEALTHY":
-      return "text-emerald-400";
     case "LOW_SPACE":
-      return "text-amber-400";
+      return "tag";
     case "UNAVAILABLE":
-      return "text-red-400";
+      return "status-blocked";
     default:
-      return "text-zinc-400";
+      return "muted";
   }
 }
 
@@ -63,39 +63,32 @@ function StorageDiskCard({ disk }: { disk: DiskStat }) {
       : 0;
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
-      <div className="mb-3 flex items-start justify-between gap-2">
+    <article className="surface stack-tight">
+      <div className="toolbar">
         <div>
-          <h4 className="font-medium text-zinc-100">{disk.id}</h4>
-          <p className="mt-0.5 text-xs text-zinc-500">Bucket: {disk.bucket}</p>
+          <h3>{disk.id}</h3>
+          <p className="muted">Bucket: {disk.bucket}</p>
         </div>
-        <span className={`text-xs font-medium ${diskStatusClass(disk.status)}`}>
-          {diskStatusLabel(disk.status)}
-        </span>
+        <span className={diskStatusClass(disk.status)}>{diskStatusLabel(disk.status)}</span>
       </div>
-
-      <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-zinc-800">
-        <div
-          className="h-full rounded-full bg-sky-500 transition-all duration-300"
-          style={{ width: `${usedPercent}%` }}
-        />
+      <div className="meter" aria-hidden="true">
+        <span style={{ width: `${usedPercent}%` }} />
       </div>
-
-      <div className="grid grid-cols-3 gap-2 text-xs text-zinc-400">
+      <dl className="a-deflist">
         <div>
-          <span className="block text-zinc-500">Total</span>
-          {formatDiskBytes(disk.total_bytes)}
+          <dt>Total</dt>
+          <dd>{formatDiskBytes(disk.total_bytes)}</dd>
         </div>
         <div>
-          <span className="block text-zinc-500">Used</span>
-          {formatDiskBytes(disk.used_bytes)}
+          <dt>Used</dt>
+          <dd>{formatDiskBytes(disk.used_bytes)}</dd>
         </div>
         <div>
-          <span className="block text-zinc-500">Free</span>
-          {formatDiskBytes(disk.free_bytes)}
+          <dt>Free</dt>
+          <dd>{formatDiskBytes(disk.free_bytes)}</dd>
         </div>
-      </div>
-    </div>
+      </dl>
+    </article>
   );
 }
 
@@ -159,7 +152,7 @@ function NumericQuotaInput({
           event.currentTarget.blur();
         }
       }}
-      className="w-20 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500/50 disabled:opacity-50"
+      className="bare-input quota-input"
       aria-label={ariaLabel}
     />
   );
@@ -295,120 +288,95 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-6 overflow-y-auto">
-      <h2 className="text-xl font-semibold text-zinc-100">Admin panel</h2>
+    <PageFrame title="Admin" lead="Quotas, accounts, and disks for this storage service.">
+      <section className="a-section">
+        <h2>Users</h2>
 
-      <section className="flex flex-col gap-4">
-        <h3 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
-          Users
-        </h3>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex flex-wrap gap-2">
+        <div className="filters">
+          <div className="segment" role="group" aria-label="Role">
             {(["ALL", ...ROLES] as const).map((role) => (
               <button
                 key={role}
                 type="button"
+                aria-pressed={roleFilter === role}
                 onClick={() => {
                   setRoleFilter(role);
                   setPage(1);
                 }}
-                className={[
-                  "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-                  roleFilter === role
-                    ? "bg-sky-600/20 text-sky-400"
-                    : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100",
-                ].join(" ")}
               >
                 {role === "ALL" ? "All" : role}
               </button>
             ))}
           </div>
-
+          <label htmlFor="user-email">Email</label>
           <input
+            id="user-email"
+            name="user-email"
             type="search"
-            placeholder="Search by email..."
+            placeholder="Filter by email"
+            autoComplete="off"
+            spellCheck={false}
             value={emailSearch}
             onChange={(event) => setEmailSearch(event.target.value)}
-            className="min-w-[220px] flex-1 rounded-lg border border-zinc-700 bg-zinc-800/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-sky-500/50"
           />
         </div>
 
-        {error && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-            {error}
-          </div>
-        )}
+        {error && <div className="banner error">{error}</div>}
 
-        <div className="overflow-x-auto rounded-lg border border-zinc-800">
-          <table className="min-w-full divide-y divide-zinc-800 text-sm">
-            <thead className="bg-zinc-900/80">
+        <div className="table-wrap">
+          <table>
+            <thead>
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">Email</th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">
+                <th>Email</th>
+                <th>
                   Role
-                  <span className="mt-0.5 block text-xs font-normal text-zinc-500">
-                    changed in Auth-Service /admin
-                  </span>
+                  <span className="role-note">changed in Auth-Service /admin</span>
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">Used</th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">
-                  Total quota (MB)
+                <th>Status</th>
+                <th>Used</th>
+                <th>Total quota (MB)</th>
+                <th>Private quota (GB)</th>
+                <th>Registered</th>
+                <th>
+                  <span className="sr-only">Actions</span>
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">
-                  Private quota (GB)
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400">Registered</th>
-                <th className="px-4 py-3 text-left font-medium text-zinc-400" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800 bg-zinc-950/50">
+            <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-zinc-500">
-                    Loading...
+                  <td colSpan={8}>
+                    <LoadingBlock active label="Loading users…" />
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-zinc-500">
-                    No users found
+                  <td colSpan={8}>
+                    <p className="empty">No one matches that email.</p>
                   </td>
                 </tr>
               ) : (
                 users.map((user) => (
-                  <tr key={user.id} className="hover:bg-zinc-900/40">
-                    <td className="px-4 py-3 text-zinc-100">{user.email}</td>
-                    <td className="px-4 py-3">
-                      <span className="text-zinc-100">{user.role}</span>
+                  <tr key={user.id}>
+                    <td>{user.email}</td>
+                    <td className={user.role === "BLOCKED" ? "status-blocked" : undefined}>
+                      {user.role}
                     </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={
-                          user.is_active ? "text-emerald-400" : "text-red-400"
-                        }
-                      >
-                        {user.is_active ? "Active" : "Blocked"}
-                      </span>
+                    <td className={user.is_active ? undefined : "status-blocked"}>
+                      {user.is_active ? "Active" : "Blocked"}
                     </td>
-                    <td className="px-4 py-3 text-zinc-300">
-                      {formatBytes(user.quota_used_bytes, false)}
-                    </td>
-                    <td className="px-4 py-3">
+                    <td>{formatBytes(user.quota_used_bytes, false)}</td>
+                    <td>
                       <TotalQuotaInput user={user} onSaved={() => void fetchUsers()} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td>
                       <PrivateQuotaInput user={user} onSaved={() => void fetchUsers()} />
                     </td>
-                    <td className="px-4 py-3 text-zinc-400">
-                      {formatDateTime(user.created_at)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-2">
+                    <td>{formatDateTime(user.created_at)}</td>
+                    <td>
+                      <div className="actions">
                         <Button
                           variant="danger"
-                          className="w-auto px-3 py-1.5 text-xs"
                           disabled={!user.is_active || user.id === currentUser.user_id}
                           onClick={() => void handleBlock(user)}
                         >
@@ -416,7 +384,6 @@ export default function AdminPage() {
                         </Button>
                         <Button
                           variant="secondary"
-                          className="w-auto px-3 py-1.5 text-xs"
                           disabled={user.id === currentUser.user_id}
                           onClick={() => void handleDelete(user)}
                         >
@@ -432,27 +399,27 @@ export default function AdminPage() {
         </div>
 
         {totalPages > 1 && (
-          <div className="flex items-center justify-between text-sm text-zinc-400">
+          <div className="pager">
             <span>
               Showing {users.length} of {total}
             </span>
-            <div className="flex gap-2">
+            <div className="actions">
               <button
                 type="button"
+                className="btn btn-ghost"
                 disabled={page <= 1}
                 onClick={() => setPage((current) => current - 1)}
-                className="rounded-lg bg-zinc-800 px-3 py-1.5 text-zinc-300 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Previous
               </button>
-              <span className="px-2 py-1.5">
+              <span>
                 {page} / {totalPages}
               </span>
               <button
                 type="button"
+                className="btn btn-ghost"
                 disabled={page >= totalPages}
                 onClick={() => setPage((current) => current + 1)}
-                className="rounded-lg bg-zinc-800 px-3 py-1.5 text-zinc-300 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next
               </button>
@@ -461,27 +428,20 @@ export default function AdminPage() {
         )}
       </section>
 
-      <section className="flex flex-col gap-4">
-        <h3 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
-          Storage
-        </h3>
-
+      <section className="a-section">
+        <h2>Storage</h2>
         {storageLoading ? (
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-8 text-center text-sm text-zinc-500">
-            Loading disk stats...
-          </div>
+          <LoadingBlock active label="Loading disks…" />
         ) : disks.length === 0 ? (
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-8 text-center text-sm text-zinc-500">
-            No disks found
-          </div>
+          <p className="empty">No disks found.</p>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="card-grid">
             {disks.map((disk) => (
               <StorageDiskCard key={disk.id} disk={disk} />
             ))}
           </div>
         )}
       </section>
-    </div>
+    </PageFrame>
   );
 }

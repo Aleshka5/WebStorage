@@ -122,25 +122,20 @@ export function ResumeStatusEditor({ statuses, onClose, onSaved }: ResumeStatusE
   }, [drafts, onSaved]);
 
   return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-zinc-100">Statuses</h3>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close status editor"
-          className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-        >
-          <X className="h-4 w-4" />
+    <section className="surface stack">
+      <div className="toolbar">
+        <h3>Statuses</h3>
+        <button type="button" onClick={onClose} aria-label="Close status editor" className="icon-btn">
+          <X size={16} />
         </button>
       </div>
 
       {drafts.length === 0 ? (
-        <p className="mb-3 text-sm text-zinc-400">No statuses yet</p>
+        <p className="empty">No statuses yet.</p>
       ) : (
-        <ul className="mb-3 flex flex-col gap-2">
+        <ul className="stack-tight">
           {drafts.map((draft) => (
-            <li key={draft.key} className="flex items-center gap-2">
+            <li key={draft.key} className="field-row">
               <input
                 type="color"
                 value={HEX_COLOR_PATTERN.test(draft.color) ? draft.color : DEFAULT_STATUS_COLOR}
@@ -148,7 +143,7 @@ export function ResumeStatusEditor({ statuses, onClose, onSaved }: ResumeStatusE
                   updateDraft(draft.key, { color: event.target.value.toUpperCase() })
                 }
                 aria-label={`Colour for ${draft.name || "new status"}`}
-                className="h-9 w-10 shrink-0 cursor-pointer rounded-lg border border-zinc-700 bg-zinc-800/80 p-1"
+                className="color-input"
               />
               <input
                 type="text"
@@ -157,16 +152,14 @@ export function ResumeStatusEditor({ statuses, onClose, onSaved }: ResumeStatusE
                 placeholder="Status name"
                 aria-label="Status name"
                 autoComplete="off"
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-800/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 transition-colors hover:border-zinc-600 focus:outline-none focus:ring-2 focus:ring-sky-500/50"
+                className="bare-input"
               />
-              <span className="hidden w-20 shrink-0 font-mono text-xs text-zinc-500 sm:inline">
-                {draft.color}
-              </span>
+              <span className="meta-code hide-sm">{draft.color}</span>
               <button
                 type="button"
                 title="Delete status"
                 aria-label={`Delete ${draft.name || "status"}`}
-                className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                className="icon-btn danger"
                 onClick={() => handleRemove(draft.key)}
               >
                 <Trash2 size={16} />
@@ -176,20 +169,19 @@ export function ResumeStatusEditor({ statuses, onClose, onSaved }: ResumeStatusE
         </ul>
       )}
 
-      {error && <p className="mb-3 text-xs text-red-400">{error}</p>}
+      {error && <p className="form-error">{error}</p>}
 
-      <p className="mb-3 text-xs text-zinc-500">
+      <p className="muted">
         Deleting a status only removes it from this list. Vacancies that used it show “No status”.
       </p>
 
-      <div className="flex gap-2">
-        <Button type="button" variant="secondary" className="w-auto" onClick={handleAdd}>
-          <Plus size={16} className="mr-1.5" />
+      <div className="actions">
+        <Button type="button" variant="secondary" onClick={handleAdd}>
+          <Plus size={16} aria-hidden="true" />
           Add status
         </Button>
         <Button
           type="button"
-          className="w-auto"
           disabled={isPristine || isSaving}
           isLoading={isSaving}
           onClick={() => {

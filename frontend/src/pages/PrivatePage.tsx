@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FileManager } from "../components/FileManager/FileManager";
+import { PageFrame } from "../components/Layout/PageFrame";
 import { PrivateUnlockModal } from "../components/PrivateUnlockModal";
+import { LoadingBlock } from "../components/ui/LoadingBlock";
 import { usePrivateSession } from "../hooks/usePrivateSession";
 import { getPrivateQuota, type PrivateQuota } from "../services/privateApi";
 
@@ -42,33 +44,27 @@ function PrivateQuotaBar({ refreshKey }: { refreshKey: number }) {
 
   if (isLoading || !quota) {
     return (
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
-        <div className="mb-1.5 h-2 w-full overflow-hidden rounded-full bg-zinc-800" />
-        <span className="text-xs text-zinc-500">Loading quota...</span>
+      <div className="surface-tight">
+        <div className="meter" aria-hidden="true" />
+        <p className="meter-label">Loading private storage…</p>
       </div>
     );
   }
 
   const usedPercent =
     quota.private_limit_bytes > 0
-      ? Math.min(
-          100,
-          Math.round((quota.private_bytes / quota.private_limit_bytes) * 100),
-        )
+      ? Math.min(100, Math.round((quota.private_bytes / quota.private_limit_bytes) * 100))
       : 0;
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
-      <div className="mb-1.5 h-2 w-full overflow-hidden rounded-full bg-zinc-800">
-        <div
-          className="h-full rounded-full bg-violet-500 transition-all duration-300"
-          style={{ width: `${usedPercent}%` }}
-        />
+    <div className="surface-tight">
+      <div className="meter" aria-hidden="true">
+        <span style={{ width: `${usedPercent}%` }} />
       </div>
-      <span className="text-xs text-zinc-400">
+      <p className="meter-label">
         Private: {formatPrivateUsedBytes(quota.private_bytes)} of{" "}
         {formatPrivateLimitBytes(quota.private_limit_bytes)}
-      </span>
+      </p>
     </div>
   );
 }
@@ -87,32 +83,20 @@ export default function PrivatePage() {
     navigate("/files");
   }, [navigate]);
 
-  if (isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <span className="h-8 w-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-      </div>
-    );
-  }
-
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <h2 className="text-xl font-semibold text-zinc-100">Private</h2>
-
+    <PageFrame title="Private" lead="Encrypted files. A passphrase unlocks them on this device.">
+      {isLoading ? <LoadingBlock active label="Loading private files…" /> : null}
       {isActive && (
         <>
           <PrivateQuotaBar refreshKey={quotaRefreshKey} />
-          <div className="min-h-0 flex-1">
-            <FileManager apiPrefix="/api/private" mode="encrypted" />
-          </div>
+          <FileManager apiPrefix="/api/private" mode="encrypted" />
         </>
       )}
-
       <PrivateUnlockModal
         isOpen={showUnlockModal}
         onSuccess={handleUnlockSuccess}
         onCancel={handleCancel}
       />
-    </div>
+    </PageFrame>
   );
 }

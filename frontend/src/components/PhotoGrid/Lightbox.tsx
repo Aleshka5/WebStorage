@@ -74,85 +74,70 @@ export function Lightbox({ photos, currentIndex, onClose, onNavigate }: Lightbox
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/95"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Photo viewer"
-    >
-      <button
-        type="button"
-        className="absolute right-4 top-4 z-10 rounded-full bg-black/50 p-2 text-zinc-200 transition-colors hover:bg-black/70 hover:text-white"
-        onClick={onClose}
-        aria-label="Close"
-      >
-        <X className="h-6 w-6" />
-      </button>
+    <div className="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer">
+      <div className="lightbox-bar top">
+        <button type="button" className="btn btn-ghost" onClick={onClose}>
+          <X size={18} aria-hidden="true" />
+          Close
+        </button>
+      </div>
 
       {hasPrevious && (
         <button
           type="button"
-          className="absolute left-4 z-10 rounded-full bg-black/50 p-3 text-zinc-200 transition-colors hover:bg-black/70 hover:text-white"
+          className="btn btn-ghost lightbox-nav prev"
           onClick={handlePrevious}
           aria-label="Previous photo"
         >
-          <ChevronLeft className="h-8 w-8" />
+          <ChevronLeft size={18} aria-hidden="true" />
         </button>
       )}
 
       {hasNext && (
         <button
           type="button"
-          className="absolute right-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-3 text-zinc-200 transition-colors hover:bg-black/70 hover:text-white"
+          className="btn btn-ghost lightbox-nav next"
           onClick={handleNext}
           aria-label="Next photo"
         >
-          <ChevronRight className="h-8 w-8" />
+          <ChevronRight size={18} aria-hidden="true" />
         </button>
       )}
 
-      <button
-        type="button"
-        className="absolute bottom-4 right-4 z-10 rounded-full bg-black/50 p-3 text-zinc-200 transition-colors hover:bg-black/70 hover:text-white disabled:opacity-50"
-        onClick={() => void handleDownload()}
-        disabled={isDownloading}
-        aria-label="Download"
-      >
-        {isDownloading ? (
-          <span
-            className="block h-6 w-6 animate-spin rounded-full border-2 border-current border-t-transparent"
-            aria-label="Loading"
-          />
-        ) : (
-          <Download className="h-6 w-6" />
-        )}
-      </button>
-
-      <div className="flex h-full w-full items-center justify-center p-4 pt-16 pb-20">
+      <figure className="lightbox-figure">
         {!isImageLoaded && (
-          <div
-            className="absolute h-64 w-64 max-w-full animate-pulse rounded-lg bg-zinc-800"
-            aria-hidden="true"
-          />
+          <div className="skeleton" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
         )}
-
         <img
           key={photo.id}
           src={photo.original_url}
           alt=""
           loading="lazy"
-          className={[
-            "max-h-full max-w-full object-contain transition-opacity duration-300",
-            isImageLoaded ? "opacity-100" : "opacity-0",
-          ].join(" ")}
+          decoding="async"
+          style={{ opacity: isImageLoaded ? 1 : 0 }}
           onLoad={() => setIsImageLoaded(true)}
           draggable={false}
         />
-      </div>
+      </figure>
 
-      <p className="absolute bottom-4 left-4 text-sm text-zinc-400">
-        {currentIndex + 1} / {photos.length}
-      </p>
+      <div className="lightbox-bar bottom">
+        <p className="muted">
+          {currentIndex + 1} / {photos.length}
+        </p>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => void handleDownload()}
+          disabled={isDownloading}
+        >
+          <Download size={18} aria-hidden="true" />
+          {isDownloading ? "Downloading…" : "Download"}
+        </button>
+      </div>
     </div>
   );
 }

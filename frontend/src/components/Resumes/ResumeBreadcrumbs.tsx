@@ -1,4 +1,3 @@
-import { ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export interface ResumeCrumb {
@@ -12,19 +11,14 @@ interface ResumeBreadcrumbsProps {
 
 export function ResumeBreadcrumbs({ crumbs }: ResumeBreadcrumbsProps) {
   return (
-    <nav aria-label="Resumes navigation" className="flex flex-wrap items-center gap-1 text-sm">
+    <nav aria-label="Resumes navigation" className="crumbs">
       {crumbs.map((crumb, index) => (
-        <span key={`${crumb.label}-${index}`} className="inline-flex items-center gap-1">
-          {index > 0 && <ChevronRight className="h-4 w-4 text-zinc-600" aria-hidden="true" />}
+        <span key={`${crumb.label}-${index}`} className="cluster">
+          {index > 0 && <span aria-hidden="true">/</span>}
           {crumb.to ? (
-            <Link
-              to={crumb.to}
-              className="rounded px-1.5 py-0.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-            >
-              {crumb.label}
-            </Link>
+            <Link to={crumb.to}>{crumb.label}</Link>
           ) : (
-            <span className="rounded px-1.5 py-0.5 text-zinc-100">{crumb.label}</span>
+            <span className="is-current">{crumb.label}</span>
           )}
         </span>
       ))}

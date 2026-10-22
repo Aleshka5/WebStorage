@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { FileManager } from "../components/FileManager/FileManager";
+import { PageFrame } from "../components/Layout/PageFrame";
 
 export default function FilesPage() {
   const location = useLocation();
@@ -15,16 +16,9 @@ export default function FilesPage() {
   }, [location.state]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <h2 className="text-xl font-semibold text-zinc-100">Files</h2>
-      {flashMessage && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          {flashMessage}
-        </div>
-      )}
-      <div className="min-h-0 flex-1">
-        <FileManager apiPrefix="/api/files" mode="plain" />
-      </div>
-    </div>
+    <PageFrame title="Files" lead="Folders and files in this account.">
+      {flashMessage && <div className="banner">{flashMessage}</div>}
+      <FileManager apiPrefix="/api/files" mode="plain" />
+    </PageFrame>
   );
 }

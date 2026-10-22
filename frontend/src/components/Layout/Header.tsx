@@ -1,47 +1,87 @@
-import { useEffect, useRef, useState } from "react";
-import { UserCircle } from "lucide-react";
+import { useState } from "react";
 import { useAuthStore } from "../../store/auth";
+import { displayName, hubHref, signInHref } from "../../utils/hub";
+
+interface ServiceLink {
+  label: string;
+  href: string;
+}
+
+const PUBLIC_SERVICES: ServiceLink[] = [
+  { label: "Messanger", href: "https://messanger.filenkov.store" },
+  { label: "Hermes", href: "https://filenkov.store/hermes/chat" },
+];
 
 export function Header() {
   const user = useAuthStore((state) => state.user);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const sessionChecked = useAuthStore((state) => state.sessionChecked);
+  const [signingOut, setSigningOut] = useState(false);
 
-  const displayEmail = user?.email ?? "user@example.com";
-
-  useEffect(() => {
-    if (!menuOpen) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [menuOpen]);
+  const isGuest = sessionChecked && user === null;
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 sm:px-6">
-      <span className="text-lg font-semibold tracking-tight text-zinc-100">HomeCloud</span>
-
-      <div className="relative" ref={menuRef}>
-        <button
-          type="button"
-          onClick={() => setMenuOpen((prev) => !prev)}
-          aria-label="User menu"
-          aria-expanded={menuOpen}
-          className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-        >
-          <UserCircle size={28} />
-        </button>
-
-        {menuOpen && (
-          <div className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-800 shadow-xl">
-            <div className="px-4 py-3 text-sm text-zinc-300">{displayEmail}</div>
-          </div>
-        )}
+    <header className="header">
+      <a className="brand" href={hubHref()}>
+        <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path
+            d="M16 3 L29 16 L16 29 L3 16 Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+          />
+          <circle cx="16" cy="16" r="3.2" fill="var(--accent)" />
+        </svg>
+        <span className="brand-name">Filenkov</span>
+      </a>
+      <nav className="service-nav" aria-label="Primary">
+        <a href={PUBLIC_SERVICES[0].href} title={isGuest ? "Sign in required" : undefined}>
+          {PUBLIC_SERVICES[0].label}
+          {isGuest ? (
+            <span className="service-lock" aria-hidden="true">
+              🔒
+            </span>
+          ) : null}
+        </a>
+        <span aria-current="page">
+          Storage
+          {isGuest ? (
+            <span className="service-lock" aria-hidden="true">
+              🔒
+            </span>
+          ) : null}
+        </span>
+        <a href={PUBLIC_SERVICES[1].href} title={isGuest ? "Sign in required" : undefined}>
+          {PUBLIC_SERVICES[1].label}
+          {isGuest ? (
+            <span className="service-lock" aria-hidden="true">
+              🔒
+            </span>
+          ) : null}
+        </a>
+      </nav>
+      <div className="header-right">
+        {!sessionChecked ? <span className="muted">Checking sign-in…</span> : null}
+        {isGuest ? (
+          <a className="btn btn-small" href={signInHref()}>
+            Sign in
+          </a>
+        ) : null}
+        {user ? (
+          <>
+            <span className="user-name">{displayName(user.email)}</span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-small"
+              disabled={signingOut}
+              onClick={() => {
+                setSigningOut(true);
+                window.location.assign(hubHref());
+              }}
+            >
+              Sign out
+            </button>
+          </>
+        ) : null}
       </div>
     </header>
   );

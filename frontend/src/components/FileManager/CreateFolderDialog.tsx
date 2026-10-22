@@ -46,7 +46,7 @@ export function CreateFolderDialog({ isOpen, onClose, onCreate }: CreateFolderDi
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="New folder">
-      <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+      <form className="stack" onSubmit={handleSubmit}>
         <Input
           label="Folder name"
           value={name}
@@ -61,7 +61,7 @@ export function CreateFolderDialog({ isOpen, onClose, onCreate }: CreateFolderDi
           disabled={isSubmitting}
           placeholder="Enter a name"
         />
-        <div className="flex gap-2">
+        <div className="actions">
           <Button type="button" variant="secondary" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </Button>
