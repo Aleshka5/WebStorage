@@ -143,7 +143,7 @@ Two durations and one curve.
 
 | What moves | How |
 |---|---|
-| A view entering | Opacity `0 → 1` and `translateY(8px → 0)` over `--dur`. Never translate on the X axis |
+| A view entering | Opacity `0 → 1` and `translateY(8px → 0)` over `--dur`, on `.view-in` only. Never translate on the X axis. That transform is the containing block for `position: fixed`, so a confirm dialog and any other viewport layer are mounted on `document.body`, not inside the view |
 | Header show and hide | `transform: translateY` and height, over `--dur` |
 | Wordmark and service list fading in the condensed header | Opacity over `--dur-fast` |
 | A choice row | A 2px copper bar on the left, `scaleY(0 → 1)` from the top, over `--dur-fast` |
@@ -422,7 +422,33 @@ Every view opens the same way:
 
 The kicker names the service or the section. The `h1` names the view. The lead is optional.
 
-A short form or a dialog sits in `.panel` (max-width `28rem`, padding `--s6`, raised paper, 1px rule). `.stack` is a column with `--s4` between children. `.auth-page` centers that panel horizontally on a gate screen. A service uses it for its own short gate, and the Google button stays on the hub.
+A short form sits in `.panel` (max-width `28rem`, padding `--s6`, raised paper, 1px rule). `.stack` is a column with `--s4` between children. `.auth-page` centers that panel horizontally on a gate screen. A service uses it for its own short gate, and the Google button stays on the hub.
+
+### Confirm dialog
+
+A confirm dialog — delete, or any other approval — is centered on the viewport.
+
+`.view-in` enters with `translateY`. Any ancestor with a transform, filter, or perspective becomes the containing block for `position: fixed`. An overlay left inside that view is centered on the view. On a long page the scrim covers the visible screen and the panel, including Cancel and the confirm button, sits out of sight.
+
+Mount the overlay on `document.body`. Do the same for every other viewport layer (`position: fixed` against the screen): a lightbox, and a floating action such as photo upload. The header stays a direct child of the frame; it is already outside `.view-in`.
+
+```html
+<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <button type="button" class="overlay-dismiss" aria-label="Close"></button>
+  <div class="panel">
+    <h2 id="modal-title">Delete generated image?</h2>
+    <div class="stack">
+      <p>22 Oct 2026, 18:40 will be permanently deleted.</p>
+      <div class="actions">
+        <button type="button" class="btn btn-ghost">Cancel</button>
+        <button type="button" class="btn btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+```
+
+`.overlay` is `position: fixed; inset: 0`, a flex center, padding `--s4`, `z-index: 40`. The scrim is `.overlay-dismiss`: a button covering the overlay, ink mixed to 28% transparency, no drop shadow. The panel is `position: relative; z-index: 1`, so Cancel and the danger confirm sit above the scrim and take the click. The scrim and Escape run the same close action. While the request is in flight, both buttons are disabled (`opacity: 0.55`) and the confirm button keeps its label. The same two actions are used for every destructive confirm: ghost Cancel, danger confirm.
 
 ---
 
@@ -734,7 +760,7 @@ A service looks like the others when every line is true.
 3. The header shows the diamond, the wordmark linking to `https://filenkov.store`, the service list from section 5.1 with this host as `aria-current="page"`, and either `Checking sign-in…`, `Sign in`, or the username plus `Sign out`.
 4. Guests reach `https://filenkov.store/auth?return_to=…`. The service draws no Google button and reads no JWT.
 5. The first focusable control is the skip link. The view has one `h1` under a kicker. Buttons, fields, banners, and tables use the classes in the stylesheet.
-6. A list the reader chooses from is a hairline choice row. A short form sits in `.panel`.
+6. A list the reader chooses from is a hairline choice row. A short form sits in `.panel`. A confirm dialog is portaled to `document.body` and centered on the viewport, with Cancel and the confirm button above the scrim.
 7. Loading, empty, and error copy are specific sentences. A skeleton waits 120ms.
 8. At 620px the wordmark is gone and the service list still scrolls. At 760px the page padding is `--s4`, a dense table is a stack of records, and the document itself does not scroll sideways. See section 15.
 9. `prefers-reduced-motion` collapses the two durations. A keyboard walk shows the focus ring on every stop.
@@ -1390,6 +1416,40 @@ h3 { font-size: var(--step-2); }
   border: 1px solid var(--rule);
   padding: var(--s6);
   max-width: 28rem;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s4);
+}
+
+.overlay-dismiss {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  cursor: pointer;
+}
+
+.overlay .panel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+}
+
+.overlay .panel > h2 {
+  margin-bottom: var(--s4);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
 }
 
 .auth-page {

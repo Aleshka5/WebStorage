@@ -2,6 +2,7 @@ import { Plus, X } from "lucide-react";
 import { useCallback, useRef } from "react";
 import type { PhotoUploadState } from "../../hooks/usePhotoUpload";
 import { ErrorMessage } from "../ui/ErrorMessage";
+import { ViewportPortal } from "../ui/ViewportPortal";
 
 interface PhotoUploadFabProps {
   uploads: PhotoUploadState[];
@@ -44,7 +45,7 @@ export function PhotoUploadFab({
   );
 
   return (
-    <>
+    <ViewportPortal>
       <div className="upload-fab">
         <label className="btn" aria-label="Upload photos">
           <input
@@ -89,6 +90,6 @@ export function PhotoUploadFab({
           </ul>
         </div>
       )}
-    </>
+    </ViewportPortal>
   );
 }

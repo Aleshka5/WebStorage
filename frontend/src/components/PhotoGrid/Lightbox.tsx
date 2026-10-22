@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Download, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { downloadPhotoOriginal } from "../../services/photosApi";
 import type { PhotoItem } from "../../types/photos";
+import { ViewportPortal } from "../ui/ViewportPortal";
 
 interface LightboxProps {
   photos: PhotoItem[];
@@ -74,7 +75,8 @@ export function Lightbox({ photos, currentIndex, onClose, onNavigate }: Lightbox
   }
 
   return (
-    <div className="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer">
+    <ViewportPortal>
+      <div className="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer">
       <div className="lightbox-bar top">
         <button type="button" className="btn btn-ghost" onClick={onClose}>
           <X size={18} aria-hidden="true" />
@@ -138,6 +140,7 @@ export function Lightbox({ photos, currentIndex, onClose, onNavigate }: Lightbox
           {isDownloading ? "Downloading…" : "Download"}
         </button>
       </div>
-    </div>
+      </div>
+    </ViewportPortal>
   );
 }

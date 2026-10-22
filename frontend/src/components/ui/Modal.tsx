@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { ViewportPortal } from "./ViewportPortal";
 
 interface ModalProps {
   isOpen: boolean;
@@ -33,17 +34,19 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
   }
 
   return (
-    <div
-      className="overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={title ? "modal-title" : undefined}
-    >
-      <button type="button" className="overlay-dismiss" aria-label="Close" onClick={onClose} />
-      <div className="panel">
-        {title && <h2 id="modal-title">{title}</h2>}
-        <div className="stack">{children}</div>
+    <ViewportPortal>
+      <div
+        className="overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? "modal-title" : undefined}
+      >
+        <button type="button" className="overlay-dismiss" aria-label="Close" onClick={onClose} />
+        <div className="panel">
+          {title && <h2 id="modal-title">{title}</h2>}
+          <div className="stack">{children}</div>
+        </div>
       </div>
-    </div>
+    </ViewportPortal>
   );
 }
