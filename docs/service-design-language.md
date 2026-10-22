@@ -233,34 +233,28 @@ Same labels, same order, on every host. The current host is a `<span aria-curren
 
 | Label | Href | Who sees it |
 |---|---|---|
-| Messanger | `https://messanger.filenkov.store` | Everyone. Guests also see a lock |
 | Storage | `https://storage.filenkov.store` | Everyone. Guests also see a lock |
-| Hermes | `https://filenkov.store/hermes/chat` | Everyone. Guests also see a lock |
 | Image | `https://image.filenkov.store` | Only when the person's **image** service role is `FAMILY` or `ADMIN`. Hidden otherwise. Never locked |
 | Chat | `https://llm.filenkov.store` | Only when the hub role `global_role` is `ADMIN`. Hidden otherwise. Never locked |
 | Admin | `https://filenkov.store/admin` | Only when `global_role` is `ADMIN`. Hidden otherwise |
 
-The spelling **Messanger** is the real host name.
-
-A guest lock is the character `🔒` inside `<span class="service-lock" aria-hidden="true">`, and the anchor has `title="Sign in required"`. Guests may click Messanger, Storage, and Hermes. The gateway sends them through sign-in and back. Image, Chat, and Admin stay hidden unless the role check passes. A link that would answer 403 is noise.
+A guest lock is the character `🔒` inside `<span class="service-lock" aria-hidden="true">`. On the current host the lock sits inside the `<span aria-current="page">`. On another host the anchor has `title="Sign in required"`. Guests may open Storage. The gateway sends them through sign-in and back. Image, Chat, and Admin stay hidden unless the role check passes. A link that would answer 403 is noise.
 
 `global_role` arrives on the service's backend as the request header `X-Auth-Role`. That is enough to show or hide Chat and Admin. The image role is a different fact and is not in `X-Auth-Role`. Show Image only when the service's own backend knows that role. When it does not, omit Image.
 
 ```html
 <nav class="service-nav" aria-label="Primary">
-  <a href="https://messanger.filenkov.store">Messanger</a>
   <span aria-current="page">Storage</span>
-  <a href="https://filenkov.store/hermes/chat">Hermes</a>
   <!-- Image, Chat, Admin appended only when the role check passes -->
 </nav>
 ```
 
-Guest version of a locked link:
+Guest version of the current service:
 
 ```html
-<a href="https://messanger.filenkov.store" title="Sign in required">
-  Messanger<span class="service-lock" aria-hidden="true">🔒</span>
-</a>
+<span aria-current="page">
+  Storage<span class="service-lock" aria-hidden="true">🔒</span>
+</span>
 ```
 
 ### 5.2 Three header states
