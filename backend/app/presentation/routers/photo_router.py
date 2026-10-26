@@ -14,8 +14,10 @@ from app.domain.value_objects.error_codes import ErrorCode
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.storage.base_adapter import READ_CHUNK_SIZE
+from app.application.indexing.immediate import capture_immediate_index_ids
 from app.presentation.dependencies.auth import get_current_user, get_quota_repository
 from app.presentation.dependencies.photos import get_photo_service
+from app.presentation.indexing_notify import deliver_immediate_index_notifications
 from app.presentation.routers.file_router import _ensure_upload_quota
 from app.presentation.schemas.photos import PhotoItemResponse, PhotoListResponse
 from app.presentation.utils.content_disposition import build_attachment_content_disposition
@@ -121,22 +123,25 @@ async def upload_photo(
         file_size,
     )
 
-    try:
-        await _ensure_upload_quota(
-            current_user.id,
-            file_size,
-            quota_repo,
-        )
-        record = await photo_service.upload_photo(
-            user_id=current_user.id,
-            filename=filename,
-            data=_iter_upload_chunks(uploaded_file),
-            size=file_size,
-        )
-        await session.commit()
-    except Exception as exc:
-        await session.rollback()
-        _raise_http_for_photo_error(exc)
+    with capture_immediate_index_ids() as queued_ids:
+        try:
+            await _ensure_upload_quota(
+                current_user.id,
+                file_size,
+                quota_repo,
+            )
+            record = await photo_service.upload_photo(
+                user_id=current_user.id,
+                filename=filename,
+                data=_iter_upload_chunks(uploaded_file),
+                size=file_size,
+            )
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            _raise_http_for_photo_error(exc)
+
+    await deliver_immediate_index_notifications(queued_ids)
 
     item = PhotoItem(
         id=record.id,
@@ -197,11 +202,13 @@ async def delete_photo(
 ) -> None:
     logger.info("Delete requested for photo {} user {}", photo_id, current_user.id)
 
-    try:
-        await photo_service.delete_photo(current_user.id, photo_id)
-        await session.commit()
-    except Exception as exc:
-        await session.rollback()
-        _raise_http_for_photo_error(exc)
+    with capture_immediate_index_ids() as queued_ids:
+        try:
+            await photo_service.delete_photo(current_user.id, photo_id)
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            _raise_http_for_photo_error(exc)
 
+    await deliver_immediate_index_notifications(queued_ids)
     logger.info("Deleted photo {} for user {}", photo_id, current_user.id)

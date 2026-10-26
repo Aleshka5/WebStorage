@@ -21,9 +21,11 @@ from app.domain.value_objects.storage_quota import StorageQuota
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.storage.base_adapter import READ_CHUNK_SIZE
+from app.application.indexing.immediate import capture_immediate_index_ids
 from app.presentation.dependencies.auth import get_current_user, get_quota_repository
 from app.presentation.dependencies.files import get_file_service
 from app.presentation.dependencies.shared import get_shared_file_service
+from app.presentation.indexing_notify import deliver_immediate_index_notifications
 from app.presentation.utils.content_disposition import build_attachment_content_disposition
 from app.presentation.schemas.files import (
     FileNodeResponse,
@@ -220,25 +222,27 @@ async def upload_file(
         file_size,
     )
 
-    try:
-        await _ensure_upload_quota(
-            current_user.id,
-            file_size,
-            quota_repo,
-        )
-        record = await file_service.upload_file(
-            user_id=current_user.id,
-            path=normalized,
-            filename=filename,
-            data=_iter_upload_chunks(uploaded_file),
-            size=file_size,
-            section=FileSection.FILES,
-        )
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
+    with capture_immediate_index_ids() as queued_ids:
+        try:
+            await _ensure_upload_quota(
+                current_user.id,
+                file_size,
+                quota_repo,
+            )
+            record = await file_service.upload_file(
+                user_id=current_user.id,
+                path=normalized,
+                filename=filename,
+                data=_iter_upload_chunks(uploaded_file),
+                size=file_size,
+                section=FileSection.FILES,
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
+    await deliver_immediate_index_notifications(queued_ids)
     logger.info("Upload completed for user {} file {}", current_user.id, record.id)
     return _file_record_response(record)
 
@@ -291,43 +295,46 @@ async def upload_zip_folder(
             total_uncompressed,
         )
 
-        try:
-            quota = await _ensure_upload_quota(
-                current_user.id,
-                total_uncompressed,
-                quota_repo,
-            )
-            result = await file_service.upload_zip_folder(
-                user_id=current_user.id,
-                path=normalized,
-                zip_filename=filename,
-                zip_source=spool,
-                total_uncompressed_bytes=total_uncompressed,
-                available_bytes=_available_upload_bytes(quota, total_uncompressed),
-            )
-            await session.commit()
-        except QuotaExceededError as exc:
-            await session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail={
-                    "error_code": ErrorCode.QUOTA_EXCEEDED,
-                    "message": str(exc),
-                    "available_bytes": exc.available_bytes,
-                },
-            )
-        except ValueError as exc:
-            await session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error_code": ErrorCode.UNSUPPORTED_FORMAT,
-                    "message": str(exc),
-                },
-            )
-        except Exception:
-            await session.rollback()
-            raise
+        with capture_immediate_index_ids() as queued_ids:
+            try:
+                quota = await _ensure_upload_quota(
+                    current_user.id,
+                    total_uncompressed,
+                    quota_repo,
+                )
+                result = await file_service.upload_zip_folder(
+                    user_id=current_user.id,
+                    path=normalized,
+                    zip_filename=filename,
+                    zip_source=spool,
+                    total_uncompressed_bytes=total_uncompressed,
+                    available_bytes=_available_upload_bytes(quota, total_uncompressed),
+                )
+                await session.commit()
+            except QuotaExceededError as exc:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail={
+                        "error_code": ErrorCode.QUOTA_EXCEEDED,
+                        "message": str(exc),
+                        "available_bytes": exc.available_bytes,
+                    },
+                )
+            except ValueError as exc:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error_code": ErrorCode.UNSUPPORTED_FORMAT,
+                        "message": str(exc),
+                    },
+                )
+            except Exception:
+                await session.rollback()
+                raise
+
+        await deliver_immediate_index_notifications(queued_ids)
 
     logger.info(
         "ZIP folder upload completed for user {}: {} files, {} dirs",
@@ -399,17 +406,19 @@ async def delete_file(
 ) -> None:
     logger.info("Delete requested for user {} path {}", current_user.id, path)
 
-    try:
-        await file_service.delete_by_path(
-            current_user.id,
-            path,
-            actor_role=current_user.role,
-        )
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
+    with capture_immediate_index_ids() as queued_ids:
+        try:
+            await file_service.delete_by_path(
+                current_user.id,
+                path,
+                actor_role=current_user.role,
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
+    await deliver_immediate_index_notifications(queued_ids)
     logger.info("Deleted path {} for user {}", path, current_user.id)
 
 

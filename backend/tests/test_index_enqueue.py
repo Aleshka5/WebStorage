@@ -1,4 +1,8 @@
-"""Request-path indexing only writes file_index_links. It does not call RAG."""
+"""Create and delete queue a link, then the commit hook notifies RAG.
+
+Rename, overwrite, and archive still only write the queue row. The service
+methods themselves do not construct the RAG HTTP client.
+"""
 
 from __future__ import annotations
 
@@ -19,8 +23,21 @@ from PIL import Image
 
 from app.application.archive_service import ARCHIVE_EXTENSION, ArchiveService
 from app.application.file_service import FileService
+from app.application.indexing.immediate import (
+    capture_immediate_index_ids,
+    notify_index_links,
+)
 from app.application.photo_service import PhotoService
-from app.application.ports.index_links import IndexLink
+from app.application.ports.index_links import UNSET, IndexLink, UnsetType
+from app.application.ports.rag_index import (
+    ERROR_DUPLICATE_FILE,
+    RagDeleteResult,
+    RagFileCard,
+    RagIndexHttpError,
+    RagIndexUnavailableError,
+    RagManifest,
+)
+from app.presentation.indexing_notify import deliver_immediate_index_notifications
 from app.domain.entities.file_record import FileRecord, FileSection, FileStatus
 from app.domain.indexing import (
     IndexLinkState,
@@ -255,6 +272,10 @@ class FakeIndexLinks:
     def __init__(self, *, fail: frozenset[str] = frozenset()) -> None:
         self.calls: list[tuple[object, ...]] = []
         self.fail = fail
+        self.by_id: dict[UUID, IndexLink] = {}
+        self.by_file: dict[UUID, IndexLink] = {}
+        self.names: dict[UUID, str] = {}
+        self.object_sizes: dict[str, int] = {}
 
     async def upsert_pending(
         self,
@@ -271,7 +292,15 @@ class FakeIndexLinks:
             if decision.kind is RegistrationKind.SKIP
             else IndexLinkState.PENDING
         )
-        return self._link(record, state, decision.s3_key, decision.content_type, decision.content_sha256)
+        link = self._link(
+            record,
+            state,
+            decision.s3_key,
+            decision.content_type,
+            decision.content_sha256,
+        )
+        self._save(link, record.original_name, record.size_bytes)
+        return link
 
     async def mark_content_changed(
         self,
@@ -315,10 +344,15 @@ class FakeIndexLinks:
         ids = list(file_record_ids)
         self.calls.append(("mark_removed", ids))
         self._maybe_fail("mark_removed")
-        return [
-            self._link(self._record_for(file_id), IndexLinkState.REMOVED, "removed", "application/pdf", None)
-            for file_id in ids
-        ]
+        removed: list[IndexLink] = []
+        for file_id in ids:
+            current = self.by_file.get(file_id)
+            if current is None:
+                continue
+            updated = replace(current, state=IndexLinkState.REMOVED, next_attempt_at=None)
+            self._save(updated)
+            removed.append(updated)
+        return removed
 
     async def mark_archived(
         self,
@@ -367,6 +401,163 @@ class FakeIndexLinks:
             created_at=now,
             updated_at=now,
         )
+
+    def _save(
+        self,
+        link: IndexLink,
+        original_name: str | None = None,
+        size_bytes: int | None = None,
+    ) -> None:
+        self.by_id[link.id] = link
+        if link.file_record_id is not None:
+            self.by_file[link.file_record_id] = link
+            if original_name is not None:
+                self.names[link.file_record_id] = original_name
+        if size_bytes is not None:
+            self.object_sizes[link.s3_key] = size_bytes
+
+    async def get_by_file_record_id(self, file_record_id: UUID) -> IndexLink | None:
+        return self.by_file.get(file_record_id)
+
+    async def original_names(self, file_record_ids: list[UUID]) -> dict[UUID, str]:
+        return {
+            file_id: self.names[file_id]
+            for file_id in file_record_ids
+            if file_id in self.names
+        }
+
+    async def claim_due(self, limit: int, now: datetime) -> list[IndexLink]:
+        del limit, now
+        raise AssertionError("immediate notify must not claim a batch")
+
+    async def apply_transition(
+        self,
+        link_id: UUID,
+        *,
+        state: IndexLinkState | UnsetType = UNSET,
+        attempts: int | UnsetType = UNSET,
+        next_attempt_at: datetime | None | UnsetType = UNSET,
+        rag_file_id: UUID | None | UnsetType = UNSET,
+        last_error_code: str | None | UnsetType = UNSET,
+        s3_key: str | UnsetType = UNSET,
+        content_sha256: str | None | UnsetType = UNSET,
+        content_type: str | UnsetType = UNSET,
+        now: datetime | None = None,
+    ) -> IndexLink | None:
+        current = self.by_id.get(link_id)
+        if current is None:
+            return None
+        changes: dict[str, object] = {}
+        incoming = {
+            "state": state,
+            "attempts": attempts,
+            "next_attempt_at": next_attempt_at,
+            "rag_file_id": rag_file_id,
+            "last_error_code": last_error_code,
+            "s3_key": s3_key,
+            "content_sha256": content_sha256,
+            "content_type": content_type,
+        }
+        for key, value in incoming.items():
+            if isinstance(value, UnsetType):
+                continue
+            changes[key] = value
+        payload_keys = {
+            "state",
+            "rag_file_id",
+            "last_error_code",
+            "s3_key",
+            "content_sha256",
+            "content_type",
+        }
+        if any(key in changes for key in payload_keys):
+            changes["updated_at"] = now or current.updated_at
+        updated = IndexLink(**{**current.__dict__, **changes})
+        self._save(updated)
+        return updated
+
+
+class _ImmediateRag:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.deletes: list[UUID] = []
+        self.file_id = uuid4()
+        self.error: Exception | None = None
+
+    async def register_document(
+        self,
+        manifest: RagManifest,
+        *,
+        user_id: UUID,
+        request_id: UUID | None = None,
+    ) -> RagFileCard:
+        del manifest, user_id, request_id
+        self.calls.append("register_document")
+        self._raise()
+        return _uploaded_card(self.file_id)
+
+    async def register_image(
+        self,
+        manifest: RagManifest,
+        *,
+        user_id: UUID,
+        request_id: UUID | None = None,
+    ) -> RagFileCard:
+        del manifest, user_id, request_id
+        self.calls.append("register_image")
+        self._raise()
+        return _uploaded_card(self.file_id)
+
+    async def delete_vectors(
+        self,
+        rag_file_id: UUID,
+        *,
+        user_id: UUID,
+        request_id: UUID | None = None,
+    ) -> RagDeleteResult:
+        del user_id, request_id
+        self.calls.append("delete_vectors")
+        self.deletes.append(rag_file_id)
+        self._raise()
+        return RagDeleteResult(file_id=rag_file_id, status="deleting")
+
+    def _raise(self) -> None:
+        if self.error is not None:
+            raise self.error
+
+
+class _LinkObjects:
+    def __init__(self, links: FakeIndexLinks) -> None:
+        self._links = links
+
+    async def exists(self, path: str) -> bool:
+        return path in self._links.object_sizes
+
+    async def get_size(self, path: str) -> int:
+        if path not in self._links.object_sizes:
+            raise FileNotFoundError(path)
+        return self._links.object_sizes[path]
+
+    async def read(self, path: str) -> AsyncIterator[bytes]:
+        if path not in self._links.object_sizes:
+            raise FileNotFoundError(path)
+        yield b"x" * self._links.object_sizes[path]
+
+
+def _uploaded_card(file_id: UUID) -> RagFileCard:
+    return RagFileCard(
+        file_id=file_id,
+        status="uploaded",
+        error=None,
+        content_type=None,
+        file_name=None,
+        file_size=None,
+        page_count=None,
+    )
+
+
+async def _notify(links: FakeIndexLinks, file_record_ids: list[UUID], rag: _ImmediateRag) -> None:
+    await notify_index_links(links, rag, _LinkObjects(links), file_record_ids)
 
 
 def _methods(links: FakeIndexLinks) -> list[object]:
@@ -483,23 +674,32 @@ def _logged(lines: list[str], text: str) -> bool:
     return any(text in line for line in lines)
 
 
-async def test_upload_queues_pending_and_does_not_call_rag(
+async def test_upload_registers_immediately_after_commit(
     rag_enabled: None,
     log_lines: list[str],
 ) -> None:
     links = FakeIndexLinks()
     service, user_id, adapter = await _files_service(links)
 
-    uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
+    with capture_immediate_index_ids() as queued_ids:
+        uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
+    rag = _ImmediateRag()
+    await _notify(links, queued_ids, rag)
 
     assert uploaded.status is FileStatus.COMMITTED
     assert await adapter.exists(f"docs/{PDF_NAME}")
+    assert queued_ids == [uploaded.id]
     assert _methods(links) == ["upsert_pending"]
     record, decision = links.calls[0][1], links.calls[0][2]
     assert record.id == uploaded.id
     assert decision.kind is RegistrationKind.DOCUMENT
     assert decision.s3_key == uploaded.relative_path
     assert decision.content_sha256 == uploaded.checksum_sha256
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    assert stored.state is IndexLinkState.SUBMITTED
+    assert stored.rag_file_id == rag.file_id
+    assert rag.calls == ["register_document"]
     assert _logged(log_lines, "state=PENDING")
     assert _logged(log_lines, f"file_record_id={uploaded.id}")
 
@@ -520,12 +720,21 @@ async def test_photo_upload_queues_pending(rag_enabled: None, log_lines: list[st
     )
     payload = _jpeg_bytes()
 
-    uploaded = await service.upload_photo(user_id, "sunset.jpg", _chunks(payload), len(payload))
+    with capture_immediate_index_ids() as queued_ids:
+        uploaded = await service.upload_photo(user_id, "sunset.jpg", _chunks(payload), len(payload))
     await _drain_background_tasks()
+    rag = _ImmediateRag()
+    await _notify(links, queued_ids, rag)
 
+    assert queued_ids == [uploaded.id]
     assert _methods(links) == ["upsert_pending"]
     assert links.calls[0][2].kind is RegistrationKind.IMAGE
     assert links.calls[0][1].id == uploaded.id
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    assert stored.state is IndexLinkState.SUBMITTED
+    assert stored.rag_file_id == rag.file_id
+    assert rag.calls == ["register_image"]
     assert _logged(log_lines, "state=PENDING")
 
 
@@ -539,20 +748,34 @@ async def test_zip_upload_queues_each_committed_file(rag_enabled: None) -> None:
         archive.writestr("notes/readme.txt", b"plain")
     buffer.seek(0)
 
-    stats = await service.upload_zip_folder(
-        user_id,
-        "",
-        "bundle.zip",
-        buffer,
-        len(payload) + len(b"plain"),
-        10_000_000,
-    )
+    with capture_immediate_index_ids() as queued_ids:
+        stats = await service.upload_zip_folder(
+            user_id,
+            "",
+            "bundle.zip",
+            buffer,
+            len(payload) + len(b"plain"),
+            10_000_000,
+        )
+    rag = _ImmediateRag()
+    await _notify(links, queued_ids, rag)
 
     assert stats["files"] == 2
+    assert len(queued_ids) == 2
     assert _methods(links) == ["upsert_pending", "upsert_pending"]
     kinds = {call[2].kind for call in links.calls}
     assert RegistrationKind.DOCUMENT in kinds
     assert RegistrationKind.SKIP in kinds
+    assert rag.calls == ["register_document"]
+    for call in links.calls:
+        stored = await links.get_by_file_record_id(call[1].id)
+        assert stored is not None
+        if call[2].kind is RegistrationKind.DOCUMENT:
+            assert stored.state is IndexLinkState.SUBMITTED
+            assert stored.rag_file_id == rag.file_id
+        else:
+            assert stored.state is IndexLinkState.SKIPPED
+            assert stored.rag_file_id is None
 
 
 async def test_rag_disabled_writes_nothing(
@@ -562,11 +785,16 @@ async def test_rag_disabled_writes_nothing(
     links = FakeIndexLinks()
     service, user_id, adapter = await _files_service(links)
 
-    uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
+    with capture_immediate_index_ids() as queued_ids:
+        uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
+    rag = _ImmediateRag()
+    await _notify(links, [uploaded.id], rag)
 
     assert uploaded.status is FileStatus.COMMITTED
     assert await adapter.exists(f"docs/{PDF_NAME}")
+    assert queued_ids == []
     assert links.calls == []
+    assert rag.calls == []
     assert _logged(log_lines, "RAG indexing is disabled")
     assert not _logged(log_lines, "Queued index link")
 
@@ -597,12 +825,19 @@ async def test_unsupported_type_is_still_handed_to_upsert(rag_enabled: None, log
     links = FakeIndexLinks()
     service, user_id, _adapter = await _files_service(links)
 
-    await _upload(service, user_id, "notes.txt", b"hello", FileSection.FILES)
+    with capture_immediate_index_ids() as queued_ids:
+        uploaded = await _upload(service, user_id, "notes.txt", b"hello", FileSection.FILES)
+    rag = _ImmediateRag()
+    await _notify(links, queued_ids, rag)
 
     assert _methods(links) == ["upsert_pending"]
     decision = links.calls[0][2]
     assert decision.kind is RegistrationKind.SKIP
     assert decision.skip_code is IndexSkipCode.UNSUPPORTED_TYPE
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    assert stored.state is IndexLinkState.SKIPPED
+    assert rag.calls == []
     assert _logged(log_lines, "state=SKIPPED")
 
 
@@ -612,15 +847,17 @@ async def test_content_change_calls_mark_content_changed(rag_enabled: None) -> N
     original = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
     replacement = b"%PDF-1.4 replacement body that is longer"
 
-    updated = await service.overwrite_file(
-        user_id,
-        "docs",
-        PDF_NAME,
-        _chunks(replacement),
-        len(replacement),
-        FileSection.FILES,
-    )
+    with capture_immediate_index_ids() as queued_ids:
+        updated = await service.overwrite_file(
+            user_id,
+            "docs",
+            PDF_NAME,
+            _chunks(replacement),
+            len(replacement),
+            FileSection.FILES,
+        )
 
+    assert queued_ids == []
     assert _methods(links) == ["upsert_pending", "mark_content_changed"]
     file_record_id, decision = links.calls[1][1], links.calls[1][2]
     assert file_record_id == original.id
@@ -634,8 +871,10 @@ async def test_rename_calls_mark_rekey(rag_enabled: None) -> None:
     service, user_id, _adapter = await _files_service(links)
     uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
 
-    renamed = await service.rename(user_id, uploaded.id, "renamed.pdf")
+    with capture_immediate_index_ids() as queued_ids:
+        renamed = await service.rename(user_id, uploaded.id, "renamed.pdf")
 
+    assert queued_ids == []
     assert _methods(links) == ["upsert_pending", "mark_rekey"]
     assert links.calls[1][1] == uploaded.id
     assert links.calls[1][2] == renamed.relative_path
@@ -660,10 +899,92 @@ async def test_delete_calls_mark_removed(rag_enabled: None) -> None:
     service, user_id, adapter = await _files_service(links)
     uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
 
-    await service.delete_file(user_id, uploaded.id)
+    with capture_immediate_index_ids() as queued_ids:
+        await service.delete_file(user_id, uploaded.id)
+    rag = _ImmediateRag()
+    await _notify(links, queued_ids, rag)
 
     assert not await adapter.exists(f"docs/{PDF_NAME}")
+    assert queued_ids == [uploaded.id]
     assert ("mark_removed", [uploaded.id]) in links.calls
+    assert rag.calls == []
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    assert stored.state is IndexLinkState.REMOVED
+    assert stored.rag_file_id is None
+    assert stored.next_attempt_at is not None
+
+
+async def test_delete_with_rag_file_id_sends_delete_vectors(rag_enabled: None) -> None:
+    links = FakeIndexLinks()
+    service, user_id, _adapter = await _files_service(links)
+    uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
+    rag_file_id = uuid4()
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    links._save(replace(stored, rag_file_id=rag_file_id, state=IndexLinkState.INDEXED))
+
+    with capture_immediate_index_ids() as queued_ids:
+        await service.delete_file(user_id, uploaded.id)
+    rag = _ImmediateRag()
+    await _notify(links, queued_ids, rag)
+
+    assert rag.calls == ["delete_vectors"]
+    assert rag.deletes == [rag_file_id]
+    removed = await links.get_by_file_record_id(uploaded.id)
+    assert removed is not None
+    assert removed.state is IndexLinkState.REMOVED
+    assert removed.next_attempt_at is not None
+
+
+async def test_immediate_register_adopts_duplicate_file(rag_enabled: None) -> None:
+    links = FakeIndexLinks()
+    service, user_id, _adapter = await _files_service(links)
+    with capture_immediate_index_ids() as queued_ids:
+        uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
+    adopted = uuid4()
+    rag = _ImmediateRag()
+    rag.error = RagIndexHttpError(
+        "duplicate",
+        status_code=409,
+        error_code=ERROR_DUPLICATE_FILE,
+        details={"file_id": str(adopted)},
+    )
+
+    await _notify(links, queued_ids, rag)
+
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    assert stored.state is IndexLinkState.SUBMITTED
+    assert stored.rag_file_id == adopted
+    assert stored.last_error_code is None
+
+
+async def test_rag_unavailable_leaves_upload_due_for_scheduler(
+    rag_enabled: None,
+    log_lines: list[str],
+) -> None:
+    links = FakeIndexLinks()
+    service, user_id, _adapter = await _files_service(links)
+    with capture_immediate_index_ids() as queued_ids:
+        uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
+    rag = _ImmediateRag()
+    rag.error = RagIndexUnavailableError(
+        "rag down",
+        status_code=503,
+        error_code="dependency_unavailable",
+    )
+
+    await _notify(links, queued_ids, rag)
+
+    assert uploaded.status is FileStatus.COMMITTED
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    assert stored.state is IndexLinkState.PENDING
+    assert stored.rag_file_id is None
+    assert stored.attempts == 1
+    assert stored.next_attempt_at is not None
+    assert _logged(log_lines, "scheduler will retry")
 
 
 async def test_directory_delete_calls_mark_removed(rag_enabled: None) -> None:
@@ -671,10 +992,42 @@ async def test_directory_delete_calls_mark_removed(rag_enabled: None) -> None:
     service, user_id, _adapter = await _files_service(links)
     uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
 
-    released = await service.delete_directory_recursive(user_id, "docs")
+    rag_file_id = uuid4()
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    links._save(replace(stored, rag_file_id=rag_file_id, state=IndexLinkState.INDEXED))
+
+    with capture_immediate_index_ids() as queued_ids:
+        released = await service.delete_directory_recursive(user_id, "docs")
+    rag = _ImmediateRag()
+    await _notify(links, queued_ids, rag)
 
     assert released == len(PDF_BYTES)
+    assert queued_ids == [uploaded.id]
     assert ("mark_removed", [uploaded.id]) in links.calls
+    assert rag.calls == ["delete_vectors"]
+    assert rag.deletes == [rag_file_id]
+
+
+async def test_delete_by_path_directory_notifies_descendants(rag_enabled: None) -> None:
+    links = FakeIndexLinks()
+    service, user_id, adapter = await _files_service(links)
+    uploaded = await _upload(service, user_id, PDF_NAME, PDF_BYTES, FileSection.FILES)
+    rag_file_id = uuid4()
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    links._save(replace(stored, rag_file_id=rag_file_id, state=IndexLinkState.INDEXED))
+
+    with capture_immediate_index_ids() as queued_ids:
+        await service.delete_by_path(user_id, "docs")
+    rag = _ImmediateRag()
+    await _notify(links, queued_ids, rag)
+
+    assert not await adapter.exists(f"docs/{PDF_NAME}")
+    assert queued_ids == [uploaded.id]
+    assert ("mark_removed", [uploaded.id]) in links.calls
+    assert rag.calls == ["delete_vectors"]
+    assert rag.deletes == [rag_file_id]
 
 
 async def test_photo_delete_calls_mark_removed(rag_enabled: None) -> None:
@@ -692,12 +1045,24 @@ async def test_photo_delete_calls_mark_removed(rag_enabled: None) -> None:
         index_links=links,
     )
     payload = _jpeg_bytes()
-    uploaded = await service.upload_photo(user_id, "sunset.jpg", _chunks(payload), len(payload))
+    with capture_immediate_index_ids() as queued_ids:
+        uploaded = await service.upload_photo(user_id, "sunset.jpg", _chunks(payload), len(payload))
+    rag_file_id = uuid4()
+    stored = await links.get_by_file_record_id(uploaded.id)
+    assert stored is not None
+    links._save(replace(stored, rag_file_id=rag_file_id, state=IndexLinkState.INDEXED))
 
-    await service.delete_photo(user_id, uploaded.id)
+    with capture_immediate_index_ids() as removed_ids:
+        await service.delete_photo(user_id, uploaded.id)
     await _drain_background_tasks()
+    rag = _ImmediateRag()
+    await _notify(links, removed_ids, rag)
 
+    assert queued_ids == [uploaded.id]
+    assert removed_ids == [uploaded.id]
     assert ("mark_removed", [uploaded.id]) in links.calls
+    assert rag.calls == ["delete_vectors"]
+    assert rag.deletes == [rag_file_id]
 
 
 async def test_archive_calls_mark_archived(rag_enabled: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -732,8 +1097,10 @@ async def test_archive_calls_mark_archived(rag_enabled: None, monkeypatch: pytes
         lambda disk_id: adapter,
     )
 
-    assert await service._archive_record(record) is True
+    with capture_immediate_index_ids() as queued_ids:
+        assert await service._archive_record(record) is True
 
+    assert queued_ids == []
     assert not await adapter.exists(relative_path)
     assert await adapter.exists(f"{relative_path}{ARCHIVE_EXTENSION}")
     assert links.calls == [("mark_archived", record.id)]
@@ -804,3 +1171,49 @@ async def test_missing_collaborator_keeps_upload_unchanged(rag_enabled: None, lo
     assert await adapter.exists(f"docs/{PDF_NAME}")
     assert not _logged(log_lines, "Queued index link")
     assert not _logged(log_lines, "RAG indexing is disabled")
+
+
+async def test_delivery_failure_does_not_raise(
+    rag_enabled: None,
+    log_lines: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Client:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+        async def aclose(self) -> None:
+            return None
+
+    class _Boom:
+        async def __aenter__(self) -> None:
+            raise RuntimeError("db down")
+
+        async def __aexit__(self, *args: object) -> bool:
+            del args
+            return False
+
+    monkeypatch.setattr("app.presentation.indexing_notify.RagIndexClient", _Client)
+    monkeypatch.setattr(
+        "app.presentation.indexing_notify.async_session_factory",
+        lambda: _Boom(),
+    )
+
+    await deliver_immediate_index_notifications([uuid4()])
+
+    assert _logged(log_lines, "scheduler will retry")
+
+
+async def test_delivery_disabled_does_not_open_a_session(
+    rag_disabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _open_session() -> None:
+        raise AssertionError("session opened")
+
+    monkeypatch.setattr(
+        "app.presentation.indexing_notify.async_session_factory",
+        _open_session,
+    )
+
+    await deliver_immediate_index_notifications([uuid4()])

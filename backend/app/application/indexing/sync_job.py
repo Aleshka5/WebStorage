@@ -197,6 +197,15 @@ class IndexSyncJob:
         _log_finished(result)
         return result
 
+    async def process_link(self, link: IndexLink, now: datetime | None = None) -> _Outcome:
+        """Apply one already loaded link. Does not claim and does not commit.
+
+        The caller loads the row in a short session. This method does not
+        take ``FOR UPDATE``, so the RAG HTTP call does not hold a claim lock.
+        """
+        moment = _as_utc(now or datetime.now(UTC))
+        return await self._process(link, moment)
+
     async def _process(self, link: IndexLink, now: datetime) -> _Outcome:
         try:
             try:

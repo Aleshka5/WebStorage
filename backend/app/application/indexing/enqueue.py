@@ -1,8 +1,10 @@
 """Request-path updates of the ``file_index_links`` queue.
 
-Upload, rename, move, content change, delete, and archive do not call RAG.
-They only ask ``IndexLinkRepository`` to record the next state. The caller
-owns ``commit``. A queue failure propagates so that session rolls back.
+Enqueue does not call RAG and does not commit. The caller owns ``commit``.
+After a successful commit, create and delete of Files and Photos call
+``notify_index_links``. Rename, move, overwrite, and archive stay on the
+``index_sync`` scheduler. A queue failure propagates so that session rolls
+back.
 """
 
 from collections.abc import Sequence
@@ -10,6 +12,7 @@ from uuid import UUID
 
 from loguru import logger
 
+from app.application.indexing.immediate import note_immediate_index_ids
 from app.application.ports.index_links import IndexLink, IndexLinkRepository
 from app.domain.entities.file_record import FileRecord, FileSection
 from app.domain.indexing import (
@@ -52,6 +55,8 @@ async def enqueue_upload(
         _warn_private(record)
         return
     _log_queued(link)
+    if link is not None and link.file_record_id is not None:
+        note_immediate_index_ids((link.file_record_id,))
 
 
 async def enqueue_content_changed(
@@ -122,6 +127,9 @@ async def enqueue_removed(
         return
     for link in removed:
         _log_queued(link)
+    note_immediate_index_ids(
+        [link.file_record_id for link in removed if link.file_record_id is not None]
+    )
 
 
 async def enqueue_archived(

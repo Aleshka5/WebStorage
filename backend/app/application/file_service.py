@@ -745,6 +745,9 @@ class FileService:
         is_dir = await self._is_directory(normalized)
         if is_dir:
             logger.info("Deleting directory {} for user {}", normalized, actor_id)
+            if self._section is FileSection.FILES and normalized:
+                await self.delete_directory_recursive(actor_id, normalized)
+                return
             await self._adapter.delete(normalized)
             return
 
