@@ -41,6 +41,8 @@ Related: [Data Models.md](./Data%20Models.md), [Design Spec.md](./Design%20Spec.
 | `TOO_MANY_ATTEMPTS` | 429 (+ optional `retry_after`) |
 | `DISK_UNAVAILABLE` | 503 |
 | `USER_SERVICE_UNAVAILABLE` | 503 (User-Service down/timeout/failed role lookup; **E-GWUS**) |
+| `SEARCH_QUERY_INVALID` | 400 (photo search `q` empty after trim, or longer than 4000 characters) |
+| `INDEXING_UNAVAILABLE` | 503 (RAG disabled or unreachable during photo search) |
 | `INTERNAL_ERROR` | 500 |
 | `NOT_IMPLEMENTED` | 501 |
 
@@ -162,6 +164,7 @@ Allowed extensions: `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.heic`, `.heif`.
 | `GET` | `/api/photos/{photo_id}/preview` | — | JPEG (or original mime) |
 | `GET` | `/api/photos/{photo_id}/original` | — | Stream |
 | `DELETE` | `/api/photos/{photo_id}` | — | `204` |
+| `GET` | `/api/photos/search` | Query `q`, optional `limit` | `PhotoSearchResponse` — [§6a](#6a-indexing) |
 
 **PhotoItemResponse**
 
@@ -186,6 +189,84 @@ Allowed extensions: `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.heic`, `.heif`.
 ```
 
 Default `limit` = `PHOTO_BATCH_SIZE` (30).
+
+---
+
+## 6a. Indexing
+
+Routes live on `indexing_router` (`backend/app/presentation/routers/indexing_router.py`), not on the photo or admin routers. Photo search is still `/api/photos/search`.
+
+The browser calls this service. This service calls RAG at `RAG_BASE_URL` (default `http://rag-edge:8080`) with `X-Auth-User-Id` and no cookie. Upload, rename, move, overwrite, delete, and archive only write `file_index_links`. They do not call RAG. A failed link insert propagates and the request transaction rolls back.
+
+| Method | Path | Auth | Request | Success |
+|---|---|---|---|---|
+| `GET` | `/api/photos/search` | signed-in user | `q` (required), `limit` 1–50, default 20 | `PhotoSearchResponse` |
+| `GET` | `/api/indexing/status` | signed-in user | — | `{ indexed, pending, failed, skipped, total }` |
+| `GET` | `/api/admin/indexing` | ADMIN | — | `{ by_state, oldest_pending_seconds, last_errors, rag_reachable }` |
+| `POST` | `/api/admin/indexing/backfill` | ADMIN | optional `{ "limit"?: int ≥ 1 }` | `{ examined, enqueued, skipped, next_cursor, remaining, status }` |
+| `POST` | `/api/admin/indexing/retry` | ADMIN | optional `{ "state"?: "FAILED" }` | `{ requeued }` |
+
+Any other role on an admin indexing route is `403 ACCESS_DENIED`.
+
+### `GET /api/photos/search`
+
+`q` is trimmed. Empty, or longer than 4000 characters, is `400 SEARCH_QUERY_INVALID`. That check runs before any RAG call. `limit` outside 1–50 is rejected by the query schema before the handler.
+
+`RAG_ENABLED=false`, or RAG unreachable (`502`, `503`, `504`, or timeout), is `503 INDEXING_UNAVAILABLE`. When RAG is disabled the handler makes no outbound call.
+
+Hits are kept only when `file_id` matches an `INDEXED` link with `section = PHOTOS` for the caller. Files-section hits are dropped. `total` is the number of items after that filter. Order is score descending.
+
+`file_name` is the photo `original_name`. URLs are this service’s `/api/photos/{id}/preview` and `/api/photos/{id}/original`. `s3_key` and RAG’s `content_path` are not returned.
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "file_name": "sunset.jpg",
+      "preview_url": "/api/photos/{id}/preview",
+      "original_url": "/api/photos/{id}/original",
+      "score": 0.82
+    }
+  ],
+  "query": "sunset over the sea",
+  "total": 1
+}
+```
+
+### `GET /api/indexing/status`
+
+Counts are for the caller only. `indexed`, `pending`, `failed`, and `skipped` count those states. `total` is every link row for that user, including `SUBMITTED`, `REMOVED`, `ARCHIVED`, and `REINDEX_PENDING`.
+
+### `GET /api/admin/indexing`
+
+`by_state` has one key per link state (`PENDING`, `SUBMITTED`, `INDEXED`, `FAILED`, `SKIPPED`, `REMOVED`, `ARCHIVED`, `REINDEX_PENDING`). A missing state is `0`. `ARCHIVED` is separate from `REMOVED`.
+
+`oldest_pending_seconds` is the age of the oldest `PENDING` row by `created_at`, or `null` when none are pending.
+
+`last_errors` is `[{ "code", "count" }]` for every non-null `last_error_code`, ordered by count descending.
+
+`rag_reachable` is a live `GET {RAG_BASE_URL}/health`. When RAG is disabled it is `false` and no call is made.
+
+### `POST /api/admin/indexing/backfill`
+
+One page of `COMMITTED` and `ARCHIVED` Files and Photos that have no link row, in `(created_at, id)` order. Default `limit` is `RAG_INDEX_BATCH_SIZE × 10`. The body does not take a cursor. A later call continues because rows that received a link are no longer candidates.
+
+Readable files are inserted as `PENDING`. Unsupported types are `SKIPPED` / `unsupported_type`. Archived Files and Photos with no link are inserted as `SKIPPED` / `archived` and are not sent to RAG. `enqueued` counts new `PENDING` rows. `skipped` counts records in the page that were not queued as `PENDING`. `next_cursor` is `{ "created_at", "record_id" }` of the last examined record, or `null`. `remaining` is how many unlinked candidates sit after that cursor. `status` is `completed` or `skipped`.
+
+When `RAG_ENABLED` is false the handler does not call `backfill`. The response is zeros, `next_cursor: null`, and `status: "skipped"`.
+
+When `RAG_ENABLED` is true the admin route runs one page even if `RAG_BACKFILL_ENABLED` is false. Startup is different: it calls `backfill(links)` once, and that function itself honors `RAG_BACKFILL_ENABLED`. Neither path loops until `remaining` is 0.
+
+### `POST /api/admin/indexing/retry`
+
+`state` may be omitted or `"FAILED"`. Any other value is rejected by the schema. One call moves at most `RAG_INDEX_BATCH_SIZE` `FAILED` rows, oldest first, and resets `attempts` to 0.
+
+A failed row that already has `rag_file_id` moves to `SUBMITTED` (the job polls it). A row that never registered stays `PENDING` with a null id.
+
+```json
+{ "requeued": 3 }
+```
 
 ---
 
@@ -495,6 +576,8 @@ Errors: self delete → `403`; missing user → `404 USER_NOT_FOUND`. Role colum
 | `GET` | `/api/admin/backup/run` | `{ filename, path, size_bytes }` |
 | `GET` | `/api/admin/backup/list` | `{ items: [{ filename, created_at, size_bytes }] }` |
 
+Indexing queue routes (`GET /api/admin/indexing`, `POST …/backfill`, `POST …/retry`) are on the indexing router. Contract: [§6a](#6a-indexing).
+
 ---
 
 ## 11. Frontend API Clients
@@ -503,7 +586,7 @@ Errors: self delete → `403`; missing user → `404 USER_NOT_FOUND`. Role colum
 |---|---|
 | `services/api.ts` | Axios instance, credentials, private-session interceptor |
 | `filesApi.ts` | Files + shared (via prefix) |
-| `photosApi.ts` | Photos |
+| `photosApi.ts` | Photos, including `GET /api/photos/search` |
 | `generatedApi.ts` | Generated Images list, one run, and delete (no create) |
 | `privateApi.ts` | Unlock/session/quota/reset (+ file ops via FileManager) |
 | `adminApi.ts` | Users + storage |

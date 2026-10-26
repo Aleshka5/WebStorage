@@ -35,12 +35,12 @@ frontend/
 │   │   │                             ResumeBreadcrumbs, ResumesGuard
 │   │   ├── Generated/              ← DeleteGeneratedDialog
 │   │   ├── FileManager/            ← FileManager, FileList, FileItem, DropZone, CreateFolderDialog
-│   │   ├── PhotoGrid/              ← PhotoGrid, PhotoItem, Lightbox, PhotoUploadFab
+│   │   ├── PhotoGrid/              ← PhotoGrid, PhotoItem, Lightbox, PhotoUploadFab, PhotoSearchBar
 │   │   ├── ui/                     ← Button, Input, Modal, ErrorMessage
 │   │   ├── PrivateUnlockModal.tsx  ← модальное окно разблокировки
 │   │   └── ProtectedRoute.tsx      ← обёртка для защищённых маршрутов
 │   ├── pages/
-│   │   ├── PhotosPage.tsx          ← сетка фото + lightbox
+│   │   ├── PhotosPage.tsx          ← сетка фото, поиск по описанию, lightbox
 │   │   ├── GeneratedImagesPage.tsx ← список прогонов
 │   │   ├── GeneratedImagePage.tsx  ← один прогон: prompt, references, result
 │   │   ├── FilesPage.tsx           ← файловый менеджер (plain)
@@ -66,7 +66,7 @@ frontend/
 │   │   └── quota.ts                ← quota state (used_bytes, limit_bytes)
 │   ├── types/
 │   │   ├── files.ts                ← FileNode, FileManagerMode, SortField
-│   │   ├── photos.ts               ← PhotoItem, PhotoListResponse
+│   │   ├── photos.ts               ← PhotoItem, PhotoListResponse, PhotoSearchHit, PhotoSearchResponse
 │   │   └── generated.ts            ← GeneratedListItem, GeneratedRun
 │   └── utils/
 │       ├── format.ts               ← formatBytes, formatDateTime
@@ -228,7 +228,12 @@ listPhotos(page, limit) -> Promise<PhotoListResponse>
 uploadPhoto(file, onProgress?) -> Promise<PhotoItem>
 deletePhoto(id) -> Promise<void>
 downloadPhotoOriginal(originalUrl, filename) -> void
+searchPhotos(query, limit = 20) -> Promise<PhotoSearchResponse>
 ```
+
+`searchPhotos` вызывает `GET /api/photos/search` с `q` и `limit` (по умолчанию 20, сервер принимает 1–50).
+Ответ: `{ items: [{ id, file_name, preview_url, original_url, score }], query, total }`.
+`file_name` — это `original_name`. Ссылки ведут на `/api/photos/{id}/preview` и `/api/photos/{id}/original`.
 
 ### generatedApi.ts
 
@@ -444,6 +449,13 @@ Modal с Input для названия папки. Валидация через
 
 Сетка изображений через CSS grid class `.photo-grid`.
 Renders: PhotoItemComponent для каждой фотографии, Lightbox при selected index.
+Поиск — отдельная строка `PhotoSearchBar` над сеткой; сама сетка не меняется: плитка берёт `preview_url`, lightbox — `original_url`.
+
+#### PhotoSearchBar
+
+Файл: `src/components/PhotoGrid/PhotoSearchBar.tsx`
+
+Одно поле. Placeholder `Describe a photo…`. Enter отправляет форму (`onSubmit`). Кнопка очистки (`Clear search`) видна, пока в поле есть текст, и вызывает `onClear`. `maxLength` — 4000.
 
 #### PhotoItemComponent
 
@@ -561,6 +573,10 @@ NOT_IMPLEMENTED: "Функция пока недоступна"
 - Lightbox with scroll position preservation
 - Upload via FAB with progress tracking
 - Batch delete: Promise.all(deletePhoto(ids))
+- Одно поле поиска над сеткой (`PhotoSearchBar`). Placeholder `Describe a photo…`. Enter вызывает `searchPhotos`. Пока запрос идёт, страница показывает `Searching photos…`
+- Очистка поля или кнопка Clear снова загружает обычный список (`listPhotos`, страница 1) без полной перезагрузки страницы
+- Пустая выборка: `No photos match.` Текст запроса остаётся в поле
+- `503 INDEXING_UNAVAILABLE`: `Search is unavailable right now.` Обычная сетка при этом на месте
 
 #### GeneratedImagesPage
 

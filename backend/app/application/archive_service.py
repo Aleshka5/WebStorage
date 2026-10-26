@@ -7,6 +7,8 @@ from pathlib import Path
 import aiofiles
 from loguru import logger
 
+from app.application.indexing.enqueue import enqueue_archived
+from app.application.ports.index_links import IndexLinkRepository
 from app.domain.entities.file_record import FileRecord
 from app.domain.exceptions import FileNotFoundError as DomainFileNotFoundError
 from app.infrastructure.archive_manager import ArchiveManager
@@ -44,11 +46,13 @@ class ArchiveService:
         archive_manager: ArchiveManager,
         disk_router: DiskRouter,
         settings: Settings | None = None,
+        index_links: IndexLinkRepository | None = None,
     ) -> None:
         self._file_repo = file_repo
         self._archive_manager = archive_manager
         self._disk_router = disk_router
         self._settings = settings or get_settings()
+        self._index_links = index_links
 
     async def run_daily_archive(self) -> ArchiveReport:
         threshold_days = self._settings.business_logic.archive_days_threshold
@@ -151,6 +155,7 @@ class ArchiveService:
             archive_relative_path,
             compress_mode,
         )
+        await enqueue_archived(self._index_links, record)
         return True
 
     async def _compute_total_archived_bytes(self) -> int:

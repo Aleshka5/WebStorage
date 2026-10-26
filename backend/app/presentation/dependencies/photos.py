@@ -2,14 +2,19 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.photo_service import ORIGINALS_DIR, PREVIEWS_DIR, PhotoService
 from app.domain.entities.file_record import FileSection
 from app.domain.entities.user import User
 from app.domain.exceptions import StorageUnavailableError
 from app.domain.value_objects.error_codes import ErrorCode
+from app.infrastructure.database.repositories.file_index_link_repo import (
+    FileIndexLinkRepository,
+)
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
+from app.infrastructure.database.session import get_async_session
 from app.infrastructure.disk_router import DiskRouter
 from app.infrastructure.thumbnail_service import ThumbnailService
 from app.presentation.dependencies.archive_providers import get_archive_manager
@@ -52,6 +57,7 @@ async def get_photo_service(
     file_repo: FileRepository = Depends(get_file_repository),
     thumbnail_service: ThumbnailService = Depends(get_thumbnail_service),
     disk_router: DiskRouter = Depends(get_disk_router),
+    session: AsyncSession = Depends(get_async_session),
 ) -> PhotoService:
     try:
         disk_id = await _resolve_user_photos_disk_id(current_user.id, file_repo)
@@ -84,4 +90,5 @@ async def get_photo_service(
         quota_repo,
         disk_router,
         archive_manager=get_archive_manager(),
+        index_links=FileIndexLinkRepository(session),
     )

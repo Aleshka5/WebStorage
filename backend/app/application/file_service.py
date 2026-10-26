@@ -14,6 +14,15 @@ from app.application.archived_file_reader import (
     stream_decompressed_archived,
 )
 from app.application.archive_service import ARCHIVE_EXTENSION
+from app.application.indexing.enqueue import (
+    enqueue_content_changed,
+    enqueue_rekey,
+    enqueue_rekey_many,
+    enqueue_removed,
+    enqueue_upload,
+    index_enqueue_active,
+)
+from app.application.ports.index_links import IndexLinkRepository
 from app.domain.entities.file_record import FileRecord, FileSection, FileStatus
 from app.domain.exceptions import AccessDeniedError, FileNotFoundError, QuotaExceededError
 from app.domain.value_objects.storage_quota import StorageQuota
@@ -39,6 +48,7 @@ class FileService:
         section: FileSection = FileSection.FILES,
         archive_manager: ArchiveManager | None = None,
         disk_router: DiskRouter | None = None,
+        index_links: IndexLinkRepository | None = None,
     ) -> None:
         self._adapter = adapter
         self._quota_repo = quota_repo
@@ -46,6 +56,7 @@ class FileService:
         self._section = section
         self._archive_manager = archive_manager
         self._disk_router = disk_router
+        self._index_links = index_links
 
     async def list_directory(self, user_id: UUID, path: str) -> list[FileNode]:
         normalized = self._normalize_path(path)
@@ -150,6 +161,7 @@ class FileService:
                 record.id,
                 checksum,
             )
+            await enqueue_upload(self._index_links, committed)
             return committed
         except Exception:
             logger.exception(
@@ -236,6 +248,7 @@ class FileService:
                 existing.id,
                 checksum,
             )
+            await enqueue_content_changed(self._index_links, updated)
             return updated
         except Exception:
             logger.exception(
@@ -343,6 +356,7 @@ class FileService:
 
         await self._file_repo.delete(file_id)
         await self._quota_repo.decrement(record.user_id, record.size_bytes, record.section)
+        await enqueue_removed(self._index_links, [file_id])
         logger.info("Deleted file {} by user {}", file_id, actor_id)
 
     async def create_directory(self, user_id: UUID, path: str, name: str) -> None:
@@ -494,6 +508,7 @@ class FileService:
                         continue
 
                     await self._quota_repo.increment(user_id, file_size, self._section)
+                    await enqueue_upload(self._index_links, committed)
                     files_written += 1
                     total_written_bytes += file_size
                     logger.info(
@@ -563,6 +578,7 @@ class FileService:
             raise FileNotFoundError(f"File record {file_id} not found after rename")
 
         logger.info("Renamed file {} to {} for user {}", file_id, new_name, actor_id)
+        await enqueue_rekey(self._index_links, updated)
         return updated
 
     async def download_directory_as_zip(
@@ -780,6 +796,7 @@ class FileService:
         if released_bytes:
             await self._quota_repo.decrement(user_id, released_bytes, self._section)
 
+        await enqueue_removed(self._index_links, [record.id for record in records])
         logger.info(
             "Recursive delete completed for user {} at {} ({} bytes released)",
             user_id,
@@ -917,6 +934,7 @@ class FileService:
                     old_disk_prefix,
                     new_disk_prefix,
                 )
+                await self._enqueue_renamed_descendants(user_id, new_disk_prefix)
             return None
 
         record = await self._get_record_by_section_path(
@@ -928,6 +946,16 @@ class FileService:
             raise FileNotFoundError(f"File record for path {path!r} not found")
 
         return await self.rename(user_id, record.id, new_name)
+
+    async def _enqueue_renamed_descendants(self, user_id: UUID, disk_prefix: str) -> None:
+        if not index_enqueue_active(self._index_links):
+            return
+        descendants = await self._file_repo.list_active_under_prefix(
+            user_id,
+            self._section,
+            disk_prefix,
+        )
+        await enqueue_rekey_many(self._index_links, descendants)
 
     async def _is_directory(self, path: str) -> bool:
         try:

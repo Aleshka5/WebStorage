@@ -13,6 +13,8 @@ from app.application.archived_file_reader import (
     delete_archived_blob,
     stream_decompressed_archived,
 )
+from app.application.indexing.enqueue import enqueue_removed, enqueue_upload
+from app.application.ports.index_links import IndexLinkRepository
 from app.domain.entities.file_record import FileRecord, FileSection, FileStatus
 from app.domain.exceptions import AccessDeniedError, FileNotFoundError, UnsupportedFormatError
 from app.infrastructure.archive_manager import ArchiveManager
@@ -54,6 +56,7 @@ class PhotoService:
         quota_repo: QuotaRepository,
         disk_router: DiskRouter,
         archive_manager: ArchiveManager | None = None,
+        index_links: IndexLinkRepository | None = None,
     ) -> None:
         self._adapter = adapter
         self._thumbnail_service = thumbnail_service
@@ -61,6 +64,7 @@ class PhotoService:
         self._quota_repo = quota_repo
         self._disk_router = disk_router
         self._archive_manager = archive_manager
+        self._index_links = index_links
         self._thumbnail_max_px = get_settings().business_logic.thumbnail_max_px
 
     async def upload_photo(
@@ -121,6 +125,7 @@ class PhotoService:
                 record.id,
                 checksum,
             )
+            await enqueue_upload(self._index_links, committed)
             return committed
         except Exception:
             logger.exception(
@@ -227,6 +232,7 @@ class PhotoService:
 
         await self._file_repo.delete(file_id)
         await self._quota_repo.decrement(user_id, record.size_bytes, FileSection.PHOTOS)
+        await enqueue_removed(self._index_links, [file_id])
         logger.info("Deleted photo {} for user {}", file_id, user_id)
 
     async def _generate_preview(self, source_section_path: str, preview_section_path: str) -> None:

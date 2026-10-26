@@ -112,9 +112,14 @@ List may show `uploaded_by`. Delete forbidden for non-owner non-admin → error 
 | Progress | Per-item spinner/progress |
 | Open | Click → Lightbox with original |
 | Select | Long-press / checkbox → multi-delete |
+| Search | One field above the grid. Placeholder `Describe a photo…`. Enter submits. Clear reloads page 1 of the ordinary list without a full page reload |
+| Empty hits | `No photos match.` The query stays in the field |
+| Indexing outage | `Search is unavailable right now.` The ordinary grid is shown again |
 
 Grid breakpoints: 2 cols &lt;640px; 3–4 tablet; auto-fill ≥200px desktop.  
 Formats: JPEG, PNG, HEIC, WEBP, GIF.
+
+Search calls `GET /api/photos/search`. A tile still uses `preview_url`; the lightbox still uses `original_url`. While the request is in flight the page shows `Searching photos…`.
 
 ---
 
@@ -155,6 +160,48 @@ A directory with unreadable `meta.yaml` is not a row. The rest of the list still
 | Delete | Same confirm dialog. On `204`, quota refreshes and the page returns to `/generated` |
 
 Delete does not call the image generator.
+
+---
+
+## 5b. Index sync (Files and Photos → RAG)
+
+**Actor:** the `app` process, plus an admin using the JSON API. There is no new admin screen.
+
+`RAG_ENABLED` defaults to false. While it is false, enqueue writes no `file_index_links` row, the `index_sync` job is not registered, and startup does not call backfill. Photo search returns `503 INDEXING_UNAVAILABLE`.
+
+| Request event | What is written | What is not done |
+|---|---|---|
+| Upload (`upload_file`, `upload_zip_folder`, `upload_photo`) | one link row in the same transaction | no RAG call |
+| Rename or move, including a directory | keep `rag_file_id`, set `PENDING`, new `s3_key`. A row that was never registered only updates `s3_key` | no RAG call |
+| Overwrite | `REINDEX_PENDING` when `rag_file_id` is set, and `attempts` reset to 0. Otherwise refresh the target and stay `PENDING` | no RAG call |
+| Delete (file, path, directory, photo) | `REMOVED`. User delete is a soft delete, so `file_record_id` stays set | no RAG call, no extra MinIO delete |
+| Archive | `ARCHIVED` after the archive succeeds | the `.zst` key is not registered |
+
+A failed link insert propagates and the request transaction rolls back. `SHARED`, `RESUMES`, and `GENERATED` never get a row. `PRIVATE` and encrypted records raise `PrivateIndexRefused` and get no row.
+
+Job id `index_sync` runs every `RAG_SYNC_INTERVAL_SECONDS` (default 60), `max_instances=1`, `coalesce=True`, plus an in-process lock. One tick claims at most `RAG_INDEX_BATCH_SIZE` due rows. The job does not commit. `main.py` commits after the tick and rolls the session back if the tick raises.
+
+| Due state | RAG call | Result |
+|---|---|---|
+| `PENDING` with `rag_file_id` | `PUT /api/files/{rag_file_id}/object` | same id, then `INDEXED` |
+| `PENDING` without an id | `POST /api/files/documents` or `POST /api/files/images`, `origin: "storage"` | `202` → `SUBMITTED` + `rag_file_id` |
+| `SUBMITTED` | `GET /api/files/{rag_file_id}` | `ready` → `INDEXED`; `error` → `FAILED`; `deleting` / `deleted` / `404` → `REMOVED` |
+| `REINDEX_PENDING` | `DELETE` the old vectors, then register again | new `rag_file_id`, `SUBMITTED`. `attempts` were reset to 0 when the content change was recorded |
+| `REMOVED` or `ARCHIVED` | `DELETE /api/files/{rag_file_id}` | vectors removed; the MinIO object stays with Storage |
+
+Text (PDF, DOCX, XLSX) goes to collection `documents`. JPEG, PNG, WebP, and GIF within `RAG_MAX_IMAGE_BYTES` go to `images`. Photos HEIC/HEIF and oversized Photos use the JPEG preview. Files HEIC and oversized Files images are `SKIPPED` / `unsupported_type`.
+
+A missing MinIO object becomes `FAILED` / `object_not_found` and is not claimed again. A missing photo preview retries with backoff, then becomes `SKIPPED` / `preview_missing`.
+
+`202` on delete, `404`, and `409 file_busy` count as vectors gone. The row stays `REMOVED` or `ARCHIVED` and is not claimed again. Any other HTTP error on those two states keeps the state, increments `attempts`, and sets `next_attempt_at`. After `RAG_MAX_ATTEMPTS` (8) the row becomes `FAILED`.
+
+Transport errors on register (`503`, `504`, timeout, connection) use the same attempt counter. Delay is `min(3600, 30 × 2^attempts)` seconds. A `SUBMITTED` row still not `ready` after `RAG_INDEX_MAX_WAIT_SECONDS` (3600), measured from `updated_at`, becomes `FAILED` / `timeout`.
+
+Startup calls `backfill(links)` once, and only when `RAG_ENABLED` is true. `backfill` itself writes nothing when `RAG_BACKFILL_ENABLED` is false. The pass is one page. It also inserts archived Files and Photos that have no link as `SKIPPED` / `archived` and does not send them to RAG.
+
+Admin retry: a `FAILED` row that already has `rag_file_id` moves to `SUBMITTED`. A row that never registered stays `PENDING` with a null id. `attempts` reset to 0.
+
+Identity on every RAG call is `X-Auth-User-Id` of the file owner. No cookie and no `X-Auth-Role`. Both services use the MinIO bucket `storage`. Storage remains the only owner of objects. See [ADR-011](./adr/ADR-011-shared-minio-bucket-with-rag.md).
 
 ---
 
@@ -331,6 +378,8 @@ Ops endpoints (archive/backup/maintenance) exist on API; FE coverage optional �
 | Network / 500 | Toast or inline error; retry where safe |
 | 403 | Inline access error; no crash |
 | Empty folder / no photos | Friendly empty copy + primary CTA (upload) |
+| Photo search, no hits | `No photos match.` Query stays in the field |
+| Photo search, RAG down or disabled | `Search is unavailable right now.` Ordinary grid still loads |
 | Validation | Inline under fields (auth, folder name) |
 
 ---
@@ -350,6 +399,24 @@ Ops endpoints (archive/backup/maintenance) exist on API; FE coverage optional �
 ### File record lifecycle
 
 `PENDING` → `COMMITTED` → (`ARCHIVED` ↔ readable) → `DELETED`
+
+User delete sets `DELETED` and keeps the row. The index link stays attached (`file_record_id` unchanged) until something actually deletes the `file_records` row.
+
+### Index link
+
+```text
+upload ─► PENDING ─► SUBMITTED ─► INDEXED
+              │           │
+              ├─► SKIPPED └─► FAILED
+rename/move of a registered row ─► PENDING (same rag_file_id, job sends PUT)
+overwrite ─► REINDEX_PENDING ─► delete vectors ─► register again (new rag_file_id)
+delete ─► REMOVED
+archive ─► ARCHIVED
+FAILED + rag_file_id ─► SUBMITTED   (admin retry, then poll)
+FAILED without rag_file_id ─► PENDING
+```
+
+`SKIPPED` is terminal. Confirmed `REMOVED` and `ARCHIVED` stay in the table for counts and leave the due set.
 
 ---
 

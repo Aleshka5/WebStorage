@@ -11,6 +11,7 @@ services:
       - common_network
       - user_network
       - auth_network
+      - rag_edge
     volumes:
       - ./backend:/app
 
@@ -40,3 +41,7 @@ networks:
   auth_network:
     external: true
     name: ${AUTH_DOCKER_NETWORK:-deploy_auth}
+  # RAG-Chat edge. Storage joins this network and does not join rag_internal.
+  rag_edge:
+    external: true
+    name: rag_edge

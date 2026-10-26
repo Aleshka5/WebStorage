@@ -19,6 +19,7 @@
 | Move FS → S3 MinIO | [s3-minio-migration](./s3-minio-migration/init.md) | Implemented (1 TiB capacity fallback; no HTTP ASGI e2e) | P1 |
 | Auth-Service roles via gRPC | [auth-service-roles](./auth-service-roles/init.md) | **Superseded by [E-GWUS](./gateway-user-service/init.md)** (gRPC deleted) | — |
 | Gateway headers + User-Service + Common | [gateway-user-service](./gateway-user-service/init.md) | Implemented | P0 |
+| Storage → RAG indexing | [storage-indexing](./storage-indexing/init.md) | **Implemented** on `feature/storage-indexing` (not merged) | P1 |
 
 ## How to work an epic
 

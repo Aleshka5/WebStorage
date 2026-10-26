@@ -9,6 +9,9 @@ from app.domain.entities.file_record import FileSection
 from app.domain.entities.user import User
 from app.domain.exceptions import StorageUnavailableError
 from app.domain.value_objects.error_codes import ErrorCode
+from app.infrastructure.database.repositories.file_index_link_repo import (
+    FileIndexLinkRepository,
+)
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.database.session import get_async_session
@@ -49,6 +52,7 @@ async def get_file_service(
     current_user: User = Depends(get_current_user),
     quota_repo: QuotaRepository = Depends(get_quota_repository),
     file_repo: FileRepository = Depends(get_file_repository),
+    session: AsyncSession = Depends(get_async_session),
 ) -> FileService:
     try:
         disk_id = await _resolve_user_disk_id(current_user.id, file_repo)
@@ -79,4 +83,5 @@ async def get_file_service(
         file_repo,
         archive_manager=get_archive_manager(),
         disk_router=get_archive_disk_router(),
+        index_links=FileIndexLinkRepository(session),
     )

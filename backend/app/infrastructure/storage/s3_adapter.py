@@ -681,7 +681,7 @@ class S3StorageAdapter(StorageAdapter):
             raise
 
         size = int(response.get("ContentLength") or 0)
-        logger.info("S3 object size bucket={} key={} size={}", self._bucket, key, size)
+        logger.info("S3 object size bucket={} size={}", self._bucket, size)
         return size
 
     async def list_stale_tmp_entry_paths(self, cutoff_ts: float) -> list[str]:

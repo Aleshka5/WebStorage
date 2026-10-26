@@ -63,6 +63,23 @@ Presentation -> Application + Infrastructure.
 | `BusinessLogicSettings` | `PHOTO_BATCH_SIZE`, `THUMBNAIL_MAX_PX`, `DEFAULT_USER_QUOTA_MB` (alias `STRANGER_QUOTA_MB`), `ARCHIVE_DAYS_THRESHOLD` | Бизнес-логика |
 | `AdminSettings` | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Admin-аккаунт |
 | `LoggingSettings` | `LOG_LEVEL`, `LOG_FILE_ENABLED`, `LOG_FILE_PATH`, `LOG_FILE_ROTATION`, `LOG_FILE_RETENTION` | Логирование |
+| `RagSettings` | `RAG_ENABLED`, `RAG_BASE_URL`, `RAG_TIMEOUT_SECONDS`, `RAG_SYNC_INTERVAL_SECONDS`, `RAG_INDEX_BATCH_SIZE`, `RAG_MAX_ATTEMPTS`, `RAG_INDEX_MAX_WAIT_SECONDS`, `RAG_MAX_IMAGE_BYTES`, `RAG_BACKFILL_ENABLED` | Индексация Files и Photos в RAG. Доступ: `get_settings().rag` |
+
+`RagSettings` (дефолты):
+
+| Переменная | По умолчанию |
+|---|---|
+| `RAG_ENABLED` | `false` |
+| `RAG_BASE_URL` | `http://rag-edge:8080` (один хвостовой `/` срезается) |
+| `RAG_TIMEOUT_SECONDS` | `10` |
+| `RAG_SYNC_INTERVAL_SECONDS` | `60` |
+| `RAG_INDEX_BATCH_SIZE` | `20` |
+| `RAG_MAX_ATTEMPTS` | `8` |
+| `RAG_INDEX_MAX_WAIT_SECONDS` | `3600` |
+| `RAG_MAX_IMAGE_BYTES` | `10485760` |
+| `RAG_BACKFILL_ENABLED` | `false` |
+
+`RAG_ENABLED=false`: enqueue ничего не пишет, задача `index_sync` не регистрируется, стартовый backfill не вызывается. `GET /api/photos/search` отвечает `503 INDEXING_UNAVAILABLE` и не ходит в RAG.
 
 ### Логирование
 
@@ -105,7 +122,8 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 **ErrorCode** (`StrEnum`): `QUOTA_EXCEEDED`, `UNSUPPORTED_FORMAT`, `PRIVATE_SESSION_EXPIRED`,
 `DISK_UNAVAILABLE`, `PATH_TRAVERSAL_DETECTED`, `FILE_NOT_FOUND`, `ACCESS_DENIED`,
 `TOO_MANY_ATTEMPTS`, `EMAIL_ALREADY_EXISTS`, `INVALID_CREDENTIALS`, `UNAUTHORIZED`,
-`USER_NOT_FOUND`, `INTERNAL_ERROR`, `GENERATED_INVALID`, `GENERATED_META_INVALID`
+`USER_NOT_FOUND`, `INTERNAL_ERROR`, `GENERATED_INVALID`, `GENERATED_META_INVALID`,
+`SEARCH_QUERY_INVALID`, `INDEXING_UNAVAILABLE`
 
 ### Исключения
 
@@ -132,6 +150,9 @@ sink, сериализующий логи в JSON через `JsonFormatter`. О
 | `UserNotFoundError` | Пользователь не найден | 404 |
 | `SelfRoleChangeError` | Админ пытается сменить свою роль | 403 |
 | `SelfUserDeletionError` | Админ пытается удалить свой аккаунт | 403 |
+| `SearchQueryInvalid` | Пустой или длиннее 4000 символов запрос поиска фото (`app/domain/indexing.py`) | 400 |
+| `IndexingUnavailable` | RAG выключен или недоступен на поиске фото | 503 |
+| `PrivateIndexRefused` | Секция `PRIVATE` или `is_encrypted`. Строка индекса не создаётся | — (не HTTP; запрос просто не пишет link) |
 
 ---
 
@@ -170,6 +191,19 @@ ORM-модели SQLAlchemy 2.0 (mapped_column):
 - archive_path: Text nullable
 - index: ix_file_records_user_id
 
+**FileIndexLink** (`file_index_links`, Alembic `008`)
+- id: UUID PK
+- file_record_id: UUID nullable, FK → `file_records.id` `ON DELETE SET NULL`, unique
+- user_id: UUID, не FK
+- section: Enum(`file_section`). Пишутся только `FILES` и `PHOTOS`
+- s3_key: Text. content_sha256: CHAR(64) nullable. content_type: Text
+- rag_file_id: UUID nullable, unique
+- state: String(16). attempts: Integer default 0. next_attempt_at: timestamptz nullable
+- last_error_code: Text nullable. created_at, updated_at: timestamptz
+- indexes: `(state, next_attempt_at)`, `(user_id, state)`
+
+Обычное удаление пользователем — soft delete (`file_records.status = DELETED`). Строка остаётся, поэтому `file_record_id` у link не обнуляется. `ON DELETE SET NULL` срабатывает только когда строка `file_records` действительно удалена.
+
 **UserQuotaUsage** (user_quota_usage)
 - user_id: UUID PK FK
 - total_bytes, limit_bytes (default 100 MiB), private_bytes, private_limit_bytes, photos_bytes: BigInteger
@@ -201,6 +235,16 @@ ORM-модели SQLAlchemy 2.0 (mapped_column):
 - update_relative_path_prefix, heal_stale_relative_path
 - list_active_under_prefix(user_id, section, prefix) — COMMITTED + ARCHIVED под директорией (рекурсивное удаление)
 - get_uploaders_by_relative_paths_in_section
+
+**FileIndexLinkRepository** — очередь `file_index_links`. Вызывающий владеет `commit`.
+- `upsert_pending`, `mark_content_changed`, `mark_rekey`, `mark_removed`, `mark_archived`
+- `claim_due(limit, now)` — пять активных состояний (`PENDING`, `SUBMITTED`, `REMOVED`, `ARCHIVED`, `REINDEX_PENDING`)
+- `apply_transition`, `backfill_candidates`, `count_remaining`
+- `counts_for_user`, `admin_snapshot`, `retry_failed`
+- `indexed_photos_by_rag_file_id`
+- `PRIVATE` и зашифрованные записи отклоняются до вставки
+
+Известное ограничение: `claim_due` держит блокировки строк до `commit` всего пакета RAG. `run_index_sync` сам не коммитит; `main.py` коммитит после тика, уже после HTTP-вызовов.
 
 **QuotaRepository** — денормализованные квоты с атомарным инкрементом/декрементом
 - get_by_user_id -> UserQuotaUsage (создаёт при отсутствии)
@@ -544,6 +588,49 @@ prefix. Забирает записи в статусах `COMMITTED` и `ARCHIV
 - `run_db_backup()` -> Path (выполняет pg_dump через subprocess)
 - `list_backups()` -> list[BackupEntry]
 
+### Индексация Files и Photos
+
+Каталог: `backend/app/application/indexing/`. Доменное решение цели — `app/domain/indexing.py`. HTTP-клиент — `app/infrastructure/rag/client.py`. Оба сервиса используют бакет MinIO `storage`. Storage остаётся единственным владельцем объектов: задача удаляет только векторы в RAG. См. [ADR-011](./adr/ADR-011-shared-minio-bucket-with-rag.md).
+
+Загрузка, переименование, перенос, перезапись, удаление и архивация только пишут `file_index_links` на текущей сессии. RAG на запросе не вызывается. Ошибка вставки link пробрасывается, и транзакция запроса откатывается. Сотрудник очереди — необязательный аргумент конструктора `FileService`, `PhotoService` и `ArchiveService`. `None` оставляет прежнее поведение (Shared, Resumes, Generated, Private его не получают).
+
+`RAG_ENABLED=false`: enqueue ничего не пишет.
+
+| Событие | Запись |
+|---|---|
+| `upload_file`, `upload_zip_folder`, `upload_photo` | `PENDING` или `SKIPPED` |
+| rename / move | `rag_file_id` сохраняется, состояние `PENDING`, новый `s3_key`. Без id меняется только ключ |
+| overwrite | `REINDEX_PENDING`, если `rag_file_id` уже есть, и `attempts = 0`. Иначе цель обновляется и строка остаётся `PENDING` |
+| delete | `REMOVED`. Soft delete файла: `file_record_id` остаётся |
+| archive | `ARCHIVED`. Ключ `.zst` не регистрируется |
+
+Цель регистрации:
+
+- PDF, DOCX, XLSX → коллекция `documents`
+- JPEG, PNG, WebP, GIF в пределах `RAG_MAX_IMAGE_BYTES` → `images`
+- Photos HEIC/HEIF и фото больше лимита → JPEG-превью `users/{user_id}/photos/previews/{id}_thumb.jpg`, коллекция `images`
+- Files HEIC и слишком большие картинки Files → `SKIPPED` / `unsupported_type`
+- Shared, Resumes, Generated не индексируются. Private и encrypted поднимают `PrivateIndexRefused`, строки нет
+
+`index_sync` (`main.py`): интервал `RAG_SYNC_INTERVAL_SECONDS`, `max_instances=1`, `coalesce=True`, плюс `asyncio.Lock`. `run_index_sync` не коммитит. `main.py` коммитит после тика и делает rollback, если тик бросил исключение. При `RAG_ENABLED=false` задача не регистрируется.
+
+Один тик забирает не больше `RAG_INDEX_BATCH_SIZE` должных строк (`PENDING`, `SUBMITTED`, `REMOVED`, `ARCHIVED`, `REINDEX_PENDING`).
+
+- Регистрация: `POST /api/files/documents` или `POST /api/files/images`, `origin: "storage"`, заголовок `X-Auth-User-Id`, без cookie
+- Переименование уже зарегистрированного файла: `PUT /api/files/{rag_file_id}/object`, тот же `rag_file_id`
+- Смена содержимого: удалить векторы и зарегистрировать заново. Новый `rag_file_id`. `attempts` сброшены в 0 ещё на overwrite
+- Удаление и архив: `DELETE /api/files/{rag_file_id}`. Объект в MinIO не трогается
+- `202`, `404` и `409 file_busy` на удалении означают, что векторы уже нет. Состояние остаётся `REMOVED` или `ARCHIVED`
+- Любая другая HTTP-ошибка удаления или архива оставляет `REMOVED` или `ARCHIVED`, увеличивает `attempts` и ставит `next_attempt_at`. После `RAG_MAX_ATTEMPTS` строка становится `FAILED`
+- Пропавший объект MinIO → `FAILED` / `object_not_found` и больше не забирается в очередь
+- Пропавшее превью фото ретраится, затем `SKIPPED` / `preview_missing`
+
+Поиск: `search.py` вызывает `GET /api/chats/image-search` и оставляет только `INDEXED` ссылки секции `PHOTOS` этого пользователя. `file_name` — `original_name`.
+
+Backfill (`backfill.py`) — один проход, RAG не вызывается. Старт приложения вызывает `backfill(links)` один раз и только если `RAG_ENABLED` истинен; сама функция ничего не пишет при `RAG_BACKFILL_ENABLED=false`. Админский `POST /api/admin/indexing/backfill` при выключенном RAG не вызывает `backfill` и отвечает `status: skipped`. При включённом RAG админский вызов идёт с `backfill_enabled=True`, то есть один проход выполняется даже если стартовый флаг выключен. Архивные Files и Photos без ссылки вставляются как `SKIPPED` / `archived` и в RAG не отправляются.
+
+Повтор админом: строка `FAILED` с уже известным `rag_file_id` переходит в `SUBMITTED` (дальше опрос). Строка, которая так и не регистрировалась, остаётся `PENDING` с пустым id. `attempts` сбрасывается в 0.
+
 ---
 
 ## Presentation Layer
@@ -553,12 +640,13 @@ prefix. Забирает записи в статусах `COMMITTED` и `ARCHIV
 Файл: `backend/main.py`
 
 Инициализация FastAPI с lifespan:
-1. APScheduler стартует 5 фоновых задач:
+1. APScheduler стартует фоновые задачи:
    - `db_backup` @ 02:00
    - `daily_archive` @ 03:00
    - `cleanup_pending` every 1h
    - `cleanup_tmp` every 1h
    - `reconcile_quotas` @ 04:00
+   - `index_sync` каждые `RAG_SYNC_INTERVAL_SECONDS`, только если `RAG_ENABLED`. После тика `main.py` делает `commit`. Если RAG выключен, стартовый backfill тоже не вызывается. Если включен, один раз вызывается `backfill(links)`, и уже эта функция смотрит на `RAG_BACKFILL_ENABLED`
 2. Регистрирует exception handlers
 3. Добавляет AuthRateLimitMiddleware
 4. Включает все routers
@@ -645,6 +733,22 @@ Endpoints: GET / (status), GET /health
 | GET | /{id}/original | Оригинал (stream). 200 |
 | DELETE | /{id} | Удаление фото. 204 |
 
+`GET /api/photos/search` объявлен в IndexingRouter, не здесь.
+
+#### IndexingRouter
+
+Файл: `backend/app/presentation/routers/indexing_router.py`. Префикса у роутера нет: путь целиком на каждом маршруте.
+
+| Method | Path | Кто | Ответ |
+|---|---|---|---|
+| GET | `/api/photos/search` | вошедший пользователь | `{ items: [{ id, file_name, preview_url, original_url, score }], query, total }`. `limit` 1–50, по умолчанию 20 |
+| GET | `/api/indexing/status` | вошедший пользователь | `{ indexed, pending, failed, skipped, total }` только этого пользователя |
+| GET | `/api/admin/indexing` | ADMIN | `{ by_state, oldest_pending_seconds, last_errors: [{ code, count }], rag_reachable }` |
+| POST | `/api/admin/indexing/backfill` | ADMIN | `{ examined, enqueued, skipped, next_cursor, remaining, status }` |
+| POST | `/api/admin/indexing/retry` | ADMIN | `{ requeued }` |
+
+`400 SEARCH_QUERY_INVALID`, `503 INDEXING_UNAVAILABLE` (RAG выключен или недоступен), `403 ACCESS_DENIED` для не-админа на admin-маршрутах. При `RAG_ENABLED=false` backfill не вызывается и `status` равен `skipped`.
+
 #### GeneratedRouter (`/api/generated`)
 
 Тот же `get_current_user`, что и остальные маршруты. `BLOCKED` → 403. Запись с генератора идёт с `X-Auth-User-Id` (и при наличии `X-Auth-Email`), без cookie. Сервис не вызывает генератор.
@@ -697,6 +801,7 @@ Pydantic схемы для запросов и ответов:
 | files.py | FileNodeResponse, FileRecordResponse, MkdirRequest, RenameRequest, ZipUploadResponse |
 | private.py | UnlockRequest, UnlockResponse, PrivateQuotaResponse, PrivateSessionResponse, KeyItem, KeysListResponse, KeysPutRequest |
 | photos.py | PhotoItemResponse, PhotoListResponse |
+| indexing.py | PhotoSearchResponse, IndexStatusResponse, AdminIndexResponse, BackfillRequest, BackfillResponse, RetryRequest, RetryResponse |
 | quota.py | QuotaResponse |
 | admin.py | UpdateRoleRequest, UpdateRoleResponse, UpdateUserQuotaRequest, UserAdminViewResponse,
 UserListResponse, DiskStatResponse, StorageHealthResponse, ArchiveReportResponse,
@@ -740,6 +845,7 @@ Unhandled exceptions возвращают 500 INTERNAL_ERROR.
 - maintenance.py: get_maintenance_service
 - shared.py: get_shared_file_service
 - resumes.py: get_resumes_file_service, get_resume_service
+- indexing.py: get_index_link_repository, get_rag_index
 
 ### DB Session
 

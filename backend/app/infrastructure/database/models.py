@@ -5,12 +5,15 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CHAR,
     DateTime,
     Enum,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -171,3 +174,57 @@ class UploadSession(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="upload_sessions")
+
+
+class FileIndexLink(Base):
+    __tablename__ = "file_index_links"
+    __table_args__ = (
+        UniqueConstraint("file_record_id", name="file_index_links_file_record_id_key"),
+        UniqueConstraint("rag_file_id", name="file_index_links_rag_file_id_key"),
+        Index("ix_file_index_links_state_next_attempt_at", "state", "next_attempt_at"),
+        Index("ix_file_index_links_user_id_state", "user_id", "state"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    file_record_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "file_records.id",
+            name="file_index_links_file_record_id_fkey",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    section: Mapped[FileSection] = mapped_column(
+        Enum(FileSection, name="file_section", native_enum=True),
+        nullable=False,
+    )
+    s3_key: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(CHAR(64), nullable=True)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    rag_file_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )

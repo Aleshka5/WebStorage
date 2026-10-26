@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -127,6 +127,71 @@ class SpaSettings(BaseSettings):
     )
 
 
+class RagSettings(BaseSettings):
+    """RAG edge used to index Files and Photos. Off until the app joins rag_edge."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    enabled: bool = Field(
+        default=False,
+        validation_alias="RAG_ENABLED",
+        description=(
+            "Master switch. Off: no rows are created, no calls leave the app, "
+            "and /api/photos/search answers 503 INDEXING_UNAVAILABLE."
+        ),
+    )
+    base_url: str = Field(
+        default="http://rag-edge:8080",
+        validation_alias="RAG_BASE_URL",
+        description="RAG edge base URL. One trailing slash is stripped.",
+    )
+    timeout_seconds: int = Field(
+        default=10,
+        validation_alias="RAG_TIMEOUT_SECONDS",
+        description="Per-call timeout for RAG HTTP requests, in seconds.",
+    )
+    sync_interval_seconds: int = Field(
+        default=60,
+        validation_alias="RAG_SYNC_INTERVAL_SECONDS",
+        description="index_sync job interval, in seconds.",
+    )
+    index_batch_size: int = Field(
+        default=20,
+        validation_alias="RAG_INDEX_BATCH_SIZE",
+        description="Maximum index rows processed per index_sync tick.",
+    )
+    max_attempts: int = Field(
+        default=8,
+        validation_alias="RAG_MAX_ATTEMPTS",
+        description="Failed attempts before a row becomes FAILED.",
+    )
+    index_max_wait_seconds: int = Field(
+        default=3600,
+        validation_alias="RAG_INDEX_MAX_WAIT_SECONDS",
+        description="How long a SUBMITTED row may wait for ready, in seconds.",
+    )
+    max_image_bytes: int = Field(
+        default=10_485_760,
+        validation_alias="RAG_MAX_IMAGE_BYTES",
+        description=(
+            "Mirrors RAG EMBEDDING_MAX_IMAGE_BYTES. Above it, Photos uses the "
+            "JPEG preview and Files images are skipped."
+        ),
+    )
+    backfill_enabled: bool = Field(
+        default=False,
+        validation_alias="RAG_BACKFILL_ENABLED",
+        description="Run one backfill pass at startup.",
+    )
+
+    @field_validator("base_url")
+    @classmethod
+    def strip_one_trailing_slash(cls, value: str) -> str:
+        if value.endswith("/"):
+            return value[:-1]
+        return value
+
+
 class Settings:
     def __init__(self) -> None:
         self.database = DatabaseSettings()
@@ -138,6 +203,7 @@ class Settings:
         self.business_logic = BusinessLogicSettings()
         self.logging = LoggingSettings()
         self.spa = SpaSettings()
+        self.rag = RagSettings()
 
 
 @lru_cache

@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,12 +10,20 @@ from loguru import logger
 
 from app.application.archive_service import ArchiveService
 from app.application.backup_service import BackupService
+from app.application.indexing.backfill import backfill
+from app.application.indexing.sync_job import run_index_sync
 from app.application.maintenance_service import MaintenanceService
+from app.infrastructure.database.repositories.file_index_link_repo import (
+    FileIndexLinkRepository,
+)
 from app.infrastructure.database.repositories.file_repo import FileRepository
 from app.infrastructure.database.repositories.quota_repo import QuotaRepository
 from app.infrastructure.database.session import async_session_factory
+from app.infrastructure.disk_router import STORAGE_VOLUME_ID
 from app.infrastructure.logging_setup import setup_logging
+from app.infrastructure.rag.client import RagIndexClient
 from app.infrastructure.session_store import get_session_store
+from app.infrastructure.storage.s3_adapter import build_disk_root_adapter
 from app.presentation.dependencies.auth import get_user_directory
 from app.presentation.dependencies.archive_providers import (
     get_archive_disk_router,
@@ -24,6 +33,7 @@ from app.presentation.routers.admin_router import router as admin_router
 from app.presentation.routers.auth_router import router as auth_router
 from app.presentation.routers.file_router import router as file_router, shared_router
 from app.presentation.routers.generated_router import router as generated_router
+from app.presentation.routers.indexing_router import router as indexing_router
 from app.presentation.routers.photo_router import router as photo_router
 from app.presentation.routers.private_router import router as private_router
 from app.presentation.routers.quota_router import router as quota_router
@@ -36,6 +46,9 @@ from config import get_settings
 settings = get_settings()
 setup_logging(settings)
 
+_INDEX_SYNC_JOB_ID = "index_sync"
+_index_sync_lock = asyncio.Lock()
+
 
 async def _run_daily_archive_job() -> None:
     logger.info("Scheduled daily archive job started")
@@ -45,6 +58,7 @@ async def _run_daily_archive_job() -> None:
             archive_manager=get_archive_manager(),
             disk_router=get_archive_disk_router(),
             settings=get_settings(),
+            index_links=FileIndexLinkRepository(session),
         )
         try:
             report = await archive_service.run_daily_archive()
@@ -115,6 +129,64 @@ async def _run_reconcile_quotas_job() -> None:
             logger.exception("Scheduled reconcile_quotas job failed")
 
 
+async def _run_index_sync_job() -> None:
+    """One index_sync tick. Single-flight: the scheduler and an in-process lock."""
+    if _index_sync_lock.locked():
+        logger.warning("Scheduled index_sync job skipped because a tick is already running")
+        return
+
+    async with _index_sync_lock:
+        logger.info("Scheduled index_sync job started")
+        rag_settings = get_settings().rag
+        rag = RagIndexClient(
+            base_url=rag_settings.base_url,
+            timeout_seconds=rag_settings.timeout_seconds,
+        )
+        try:
+            async with async_session_factory() as session:
+                links = FileIndexLinkRepository(session)
+                objects = build_disk_root_adapter(STORAGE_VOLUME_ID)
+                try:
+                    result = await run_index_sync(links, rag, objects)
+                    await session.commit()
+                    logger.info(
+                        "Scheduled index_sync job completed claimed={} transitioned={} "
+                        "retried={} failed={} skipped={}",
+                        result.claimed,
+                        result.transitioned,
+                        result.retried,
+                        result.failed,
+                        result.skipped,
+                    )
+                except Exception:
+                    logger.exception("Scheduled index_sync job failed")
+                    await session.rollback()
+        finally:
+            await rag.aclose()
+
+
+async def _run_startup_index_backfill() -> None:
+    """One backfill pass. ``backfill`` itself honors ``rag.backfill_enabled``."""
+    logger.info("Startup index backfill started")
+    async with async_session_factory() as session:
+        links = FileIndexLinkRepository(session)
+        try:
+            result = await backfill(links)
+            await session.commit()
+            logger.info(
+                "Startup index backfill finished status={} examined={} enqueued={} "
+                "skipped={} remaining={}",
+                result.status,
+                result.examined,
+                result.enqueued,
+                result.skipped,
+                result.remaining,
+            )
+        except Exception:
+            logger.exception("Startup index backfill failed")
+            await session.rollback()
+
+
 async def _run_db_backup_job() -> None:
     logger.bind(action="db_backup", result="started").info("Scheduled db backup job started")
     backup_service = BackupService(
@@ -174,11 +246,30 @@ async def lifespan(app: FastAPI):
         id="db_backup",
         replace_existing=True,
     )
+    if get_settings().rag.enabled:
+        sync_interval_seconds = get_settings().rag.sync_interval_seconds
+        scheduler.add_job(
+            _run_index_sync_job,
+            "interval",
+            seconds=sync_interval_seconds,
+            id=_INDEX_SYNC_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            "Registered index_sync job interval_seconds={}",
+            sync_interval_seconds,
+        )
+    else:
+        logger.warning("RAG is disabled; skipping index_sync job and startup backfill")
     scheduler.start()
     logger.info(
         "APScheduler started: db_backup@02:00, daily_archive@03:00, cleanup_pending@1h, "
         "cleanup_tmp@1h, reconcile_quotas@04:00",
     )
+    if get_settings().rag.enabled:
+        await _run_startup_index_backfill()
     yield
     scheduler.shutdown(wait=False)
     await get_session_store().close()
@@ -202,6 +293,7 @@ app.include_router(private_router)
 app.include_router(resume_router)
 app.include_router(resume_files_router)
 app.include_router(generated_router)
+app.include_router(indexing_router)
 
 
 @app.get("/health")

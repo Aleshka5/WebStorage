@@ -1,6 +1,6 @@
 import api from "./api";
-import type { PhotoItem, PhotoListResponse } from "../types/photos";
-import { PHOTO_BATCH_SIZE } from "../types/photos";
+import type { PhotoItem, PhotoListResponse, PhotoSearchResponse } from "../types/photos";
+import { PHOTO_BATCH_SIZE, PHOTO_SEARCH_LIMIT } from "../types/photos";
 
 export async function listPhotos(
   page: number,
@@ -8,6 +8,16 @@ export async function listPhotos(
 ): Promise<PhotoListResponse> {
   const { data } = await api.get<PhotoListResponse>("/api/photos", {
     params: { page, limit },
+  });
+  return data;
+}
+
+export async function searchPhotos(
+  query: string,
+  limit = PHOTO_SEARCH_LIMIT,
+): Promise<PhotoSearchResponse> {
+  const { data } = await api.get<PhotoSearchResponse>("/api/photos/search", {
+    params: { q: query, limit },
   });
   return data;
 }

@@ -36,7 +36,7 @@ cp .env.example .env
 podman compose up --build -d
 ```
 
-`app` joins `common_network`, `user_network`, and `auth_network`. The gateway proxies to `http://app:8000`. This compose does not publish `:8000` as a second public edge.
+`app` joins `common_network`, `user_network`, `auth_network`, and external `rag_edge`. The gateway proxies to `http://app:8000`. This compose does not publish `:8000` as a second public edge.
 
 On every `app` start, `alembic upgrade head` runs. Schema lives only in `db_storage`.
 
@@ -64,6 +64,23 @@ See `.env.example`. Names used by the app:
 | `USER_SERVICE_URL` | `http://user_service:8000` | Directory; network trust only |
 | `AUTH_COOKIE_NAME` | `auth_session` | Vault session id only |
 | `AUTH_DOCKER_NETWORK` | `deploy_auth` | External network so the gateway can resolve `app` |
+| `RAG_ENABLED` | `false` | Master switch. Off: no link rows, no `index_sync`, no startup backfill, photo search returns 503 |
+| `RAG_BASE_URL` | `http://rag-edge:8080` | RAG edge. One trailing slash is stripped |
+| `RAG_TIMEOUT_SECONDS` | `10` | Per-call timeout, seconds |
+| `RAG_SYNC_INTERVAL_SECONDS` | `60` | `index_sync` interval, seconds |
+| `RAG_INDEX_BATCH_SIZE` | `20` | Rows per sync tick. Backfill page defaults to 10× this |
+| `RAG_MAX_ATTEMPTS` | `8` | Failed attempts before `FAILED` |
+| `RAG_INDEX_MAX_WAIT_SECONDS` | `3600` | How long a `SUBMITTED` row may wait for `ready` |
+| `RAG_MAX_IMAGE_BYTES` | `10485760` | Image cap (10 MiB). Photos above it use the JPEG preview. Files images above it are skipped |
+| `RAG_BACKFILL_ENABLED` | `false` | One backfill pass at startup, and only when `RAG_ENABLED` is also true |
+
+## Indexing
+
+Off unless `RAG_ENABLED=true`. Files (PDF, DOCX, XLSX) and Photos (JPEG, PNG, WebP, GIF, plus HEIC/HEIF and oversized photos via the JPEG preview) are queued in `file_index_links`. The `index_sync` job inside `app` registers them with RAG. Shared, Resumes, Generated, and Private are not indexed.
+
+`app` calls `http://rag-edge:8080` with `X-Auth-User-Id` and no cookie. Both services use the MinIO bucket `storage`. Storage remains the only owner of objects. RAG reads by key and does not get a second bucket. See [ADR-011](docs/adr/ADR-011-shared-minio-bucket-with-rag.md).
+
+Photo search is one field on `/photos` (`GET /api/photos/search`). Operators use `GET /api/admin/indexing`, `POST /api/admin/indexing/backfill`, and `POST /api/admin/indexing/retry`.
 
 ## Storage
 

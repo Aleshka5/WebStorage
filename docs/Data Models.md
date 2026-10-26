@@ -51,9 +51,17 @@ Request-time **storage** role from `X-Storage-Role` or User-Service. Not stored 
 
 Stale `PENDING` older than 1 hour → maintenance cleanup.
 
+### IndexLinkState
+
+Domain enum stored as `varchar(16)` on `file_index_links` (not a PostgreSQL enum).
+
+`PENDING` | `SUBMITTED` | `INDEXED` | `FAILED` | `SKIPPED` | `REMOVED` | `ARCHIVED` | `REINDEX_PENDING`
+
+Due for the sync job: `PENDING`, `SUBMITTED`, `REMOVED`, `ARCHIVED`, `REINDEX_PENDING`, when `next_attempt_at` is null or due. `FAILED`, `SKIPPED`, and a confirmed `REMOVED` / `ARCHIVED` (far-future `next_attempt_at`) stay out of the queue.
+
 ### ErrorCode
 
-`QUOTA_EXCEEDED`, `UNSUPPORTED_FORMAT`, `PRIVATE_SESSION_EXPIRED`, `DISK_UNAVAILABLE`, `PATH_TRAVERSAL_DETECTED`, `FILE_NOT_FOUND`, `ACCESS_DENIED`, `TOO_MANY_ATTEMPTS`, `EMAIL_ALREADY_EXISTS`, `INVALID_CREDENTIALS`, `UNAUTHORIZED`, `USER_NOT_FOUND`, `INTERNAL_ERROR`, `RESUME_NAME_INVALID`, `RESUME_DEPTH_INVALID`, `RESUME_STATUS_INVALID`, `RESUME_FIELD_INVALID`, `RESUME_NODE_EXISTS`, `RESUME_META_INVALID`, `GENERATED_INVALID`, `GENERATED_META_INVALID` (+ router-local `NOT_IMPLEMENTED`).
+`QUOTA_EXCEEDED`, `UNSUPPORTED_FORMAT`, `PRIVATE_SESSION_EXPIRED`, `DISK_UNAVAILABLE`, `PATH_TRAVERSAL_DETECTED`, `FILE_NOT_FOUND`, `ACCESS_DENIED`, `TOO_MANY_ATTEMPTS`, `EMAIL_ALREADY_EXISTS`, `INVALID_CREDENTIALS`, `UNAUTHORIZED`, `USER_NOT_FOUND`, `INTERNAL_ERROR`, `RESUME_NAME_INVALID`, `RESUME_DEPTH_INVALID`, `RESUME_STATUS_INVALID`, `RESUME_FIELD_INVALID`, `RESUME_NODE_EXISTS`, `RESUME_META_INVALID`, `GENERATED_INVALID`, `GENERATED_META_INVALID`, `SEARCH_QUERY_INVALID`, `INDEXING_UNAVAILABLE` (+ router-local `NOT_IMPLEMENTED`).
 
 ### Disk health (admin)
 
@@ -130,6 +138,47 @@ Relationships: `file_records`, `quota_usage` (1:1), `upload_sessions`.
 
 Mirrors domain FileRecord; FK `user_id` → `users.id` ON DELETE CASCADE; indexed by `user_id`.
 
+A normal user delete sets `status = DELETED` and leaves the row in place. `hard_delete` removes the row.
+
+### `file_index_links`
+
+Alembic `008_add_file_index_links` (`down_revision = 007_add_generated_file_section`). One row per Files or Photos record that is, was, or should be indexed. No new column on `file_records`. Indexing does not change quota counters.
+
+| Column | Constraints |
+|---|---|
+| `id` | UUID PK |
+| `file_record_id` | UUID nullable, FK `file_records.id` `ON DELETE SET NULL`, unique. Many nulls allowed |
+| `user_id` | UUID, not a FK. Owner copied from the file record |
+| `section` | existing `file_section` enum. Application writes `FILES` or `PHOTOS` only |
+| `s3_key` | text. Object key sent to RAG, no bucket prefix |
+| `content_sha256` | `CHAR(64)` nullable. Null until a preview hash is read |
+| `content_type` | text. Allowlist value, not `mimetypes.guess_type` |
+| `rag_file_id` | UUID nullable, unique when set. Many nulls allowed |
+| `state` | `varchar(16)`, an `IndexLinkState` value |
+| `attempts` | int, default 0 |
+| `next_attempt_at` | timestamptz nullable. Null means due now |
+| `last_error_code` | text nullable |
+| `created_at`, `updated_at` | timestamptz, server default `now()` |
+
+Indexes: `(state, next_attempt_at)`, `(user_id, state)`, unique `file_record_id`, unique `rag_file_id`.
+
+`ON DELETE SET NULL` clears `file_record_id` only when the `file_records` row is actually deleted. A normal user delete is a soft delete, so `file_record_id` stays set. `user_id` and `rag_file_id` are not cleared by that FK.
+
+Private and encrypted records raise `PrivateIndexRefused` and get no row. `SHARED`, `RESUMES`, and `GENERATED` are never indexed.
+
+Registration target (see [ADR-011](./adr/ADR-011-shared-minio-bucket-with-rag.md)):
+
+| Record | Link |
+|---|---|
+| Files PDF, DOCX, XLSX | `PENDING`, collection `documents`, key is the file |
+| JPEG, PNG, WebP, GIF at or under `RAG_MAX_IMAGE_BYTES` | `PENDING`, collection `images`, key is the file |
+| Photos HEIC/HEIF, or a Photos image over the cap | `PENDING`, collection `images`, key `users/{user_id}/photos/previews/{id}_thumb.jpg` |
+| Files HEIC/HEIF, or a Files image over the cap | `SKIPPED` / `unsupported_type` |
+| Anything else in Files or Photos | `SKIPPED` / `unsupported_type` |
+| Archived Files or Photos with no link (backfill) | `SKIPPED` / `archived`. Not sent to RAG |
+
+Content types: `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `image/jpeg`, `image/png`, `image/webp`, `image/gif`. A preview is `image/jpeg`. Its hash is filled from the preview bytes at registration time.
+
 ### `user_quota_usage`
 
 | Column | Notes |
@@ -175,6 +224,7 @@ All keys live in the single MinIO bucket `storage`. Paths are POSIX-style object
 | Generated run | `users/{user_id}/generated/{id}/` (`meta.yaml`, `result.png`, `ref-N.png`; `FileRecord`, section `GENERATED`) |
 | Shared | `shared/{relative}` |
 | DB backups | `_meta/backups/db_backup_*.sql.zst` (bucket `storage`) |
+| RAG index target | Same bucket `storage`. RAG reads the key already stored on the link. No second bucket. See [ADR-011](./adr/ADR-011-shared-minio-bucket-with-rag.md) |
 | Archive / thumbnail staging | process `/tmp` only; persisted via `StorageAdapter` |
 
 ---
@@ -273,6 +323,7 @@ the file. Delete removes the objects, `file_records` (including `ARCHIVED`), and
 4. Total usage ≤ `user_quota_usage.limit_bytes` for every role, unless `limit_bytes` is `0` (unlimited).
 5. Shared ACL: delete only by owner or ADMIN.
 6. Soft domain rules: admin cannot delete self. Role writes are 410 (User-Service).
+7. Indexing is a projection. Deleting vectors does not delete MinIO objects. A user delete soft-deletes `file_records` and leaves `file_index_links.file_record_id` set.
 
 ---
 
@@ -287,5 +338,6 @@ Alembic under `backend/alembic/versions/`:
 - `005_drop_users_role_and_legacy_auth` — drop `users.role`, `password_hash`, `google_id`
 - `006_add_resumes_file_section` — `file_section` value `RESUMES`
 - `007_add_generated_file_section` — `file_section` value `GENERATED` (`ALTER TYPE ... ADD VALUE` outside a transaction; downgrade is a no-op)
+- `008_add_file_index_links` — table `file_index_links`, FK `ON DELETE SET NULL`, unique `file_record_id` and `rag_file_id`, indexes on `(state, next_attempt_at)` and `(user_id, state)`
 
 Entrypoint runs `alembic upgrade head` on container start.

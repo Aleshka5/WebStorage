@@ -51,7 +51,8 @@ backend/app/
 | `FileSection` / `FileStatus` | Section & lifecycle enums |
 | `StorageQuota` | used/limit helpers |
 | `ErrorCode` | Stable API error codes |
-| Domain exceptions | Mapped to HTTP in presentation |
+| `decide_registration_target` | Which Files/Photos object is offered to RAG, or skipped |
+| Domain exceptions | Mapped to HTTP in presentation (`SearchQueryInvalid`, `IndexingUnavailable`, `PrivateIndexRefused`) |
 
 ### Application services
 
@@ -67,6 +68,9 @@ backend/app/
 | `ArchiveService` | Idle-file zstd archive + stats |
 | `BackupService` | `pg_dump` + zstd + retention |
 | `MaintenanceService` | PENDING cleanup, `.tmp` cleanup, quota reconcile |
+| Index enqueue | Request-path writes to `file_index_links` only. No RAG I/O |
+| `index_sync` | One batch of due links per tick. Does not commit |
+| Index backfill / search / status | One backfill page, photo search proxy, caller and admin counts |
 
 ### Infrastructure
 
@@ -78,12 +82,14 @@ backend/app/
 | `ThumbnailService` | Pillow (+ HEIF); max edge `THUMBNAIL_MAX_PX` |
 | `ArchiveManager` | zstd L22; `pre_encrypt` / `post_encrypt` |
 | `SessionStore` (Redis) | Private keys, OAuth state/ticket, rate limits |
-| Repositories | `UserRepository`, `FileRepository`, `QuotaRepository` |
-| ORM models | SQLAlchemy 2 async |
+| Repositories | `UserRepository`, `FileRepository`, `QuotaRepository`, `FileIndexLinkRepository` |
+| `RagIndexClient` | httpx to `RAG_BASE_URL`. Header `X-Auth-User-Id`. No cookie, no `X-Auth-Role` |
+| ORM models | SQLAlchemy 2 async. `FileIndexLink` added in Alembic `008` |
 
 ### Presentation
 
-- Routers: `auth`, `files`, `shared`, `photos`, `private`, `quota`, `resumes` (+ `resumes/files`), `admin`.
+- Routers: `auth`, `files`, `shared`, `photos`, `private`, `quota`, `resumes` (+ `resumes/files`), `generated`, `admin`, `indexing`.
+- Indexing routes (`/api/photos/search`, `/api/indexing/status`, `/api/admin/indexing`, backfill, retry) are a separate router. Admin routes use `check_role(Role.ADMIN)`.
 - The `/api/resumes/files` endpoints are built from the same file-handler set as `/api/files` rather than hand-copied, and are scoped to `FileSection.RESUMES`.
 - Cookie auth dependency; role checks for shared/resumes/admin.
 - Global exception handlers → structured `error_code`.
@@ -99,7 +105,7 @@ frontend/src/
 ├── components/
 │   ├── Layout/       # AppLayout, Header, Sidebar, StorageUsageBar
 │   ├── FileManager/  # Reusable manager (plain | encrypted)
-│   ├── PhotoGrid/    # Grid, Lightbox, FAB
+│   ├── PhotoGrid/    # Grid, Lightbox, FAB, PhotoSearchBar
 │   └── ui/           # Button, Input, Modal, ErrorMessage
 ├── services/         # Axios clients (files, photos, private, keys, resumes, admin, api)
 ├── store/            # Zustand: auth, quota
@@ -174,6 +180,19 @@ Encrypted adapter encrypts/decrypts names and payloads around the inner `Storage
 | `reconcile_quotas` | Daily 04:00 | `MaintenanceService.reconcile_quotas` |
 | `cleanup_pending` | Every 1h | Stale `PENDING` (>1h) |
 | `cleanup_tmp` | Every 1h | Orphan `.tmp` files |
+| `index_sync` | Every `RAG_SYNC_INTERVAL_SECONDS` (default 60) | `run_index_sync`. Registered only when `RAG_ENABLED` is true. `max_instances=1`, `coalesce=True`, plus an in-process lock. Does not commit; `main.py` commits after the tick |
+
+Startup calls `backfill(links)` once when `RAG_ENABLED` is true. That function writes nothing when `RAG_BACKFILL_ENABLED` is false. It does not loop.
+
+Request-path hooks (upload, rename, move, overwrite, delete, archive) only insert or update `file_index_links` on the current session. A failed insert propagates and the request rolls back. The job is what talks to RAG.
+
+Collections: PDF/DOCX/XLSX → `documents`. JPEG/PNG/WebP/GIF within `RAG_MAX_IMAGE_BYTES` → `images`. Photos HEIC/HEIF and oversized Photos use the JPEG preview. Files HEIC and oversized Files images are `SKIPPED` / `unsupported_type`. Shared, Resumes, and Generated are never indexed. Private and encrypted records raise `PrivateIndexRefused` and get no row.
+
+Rename or move keeps `rag_file_id` and re-keys (`PUT /api/files/{id}/object`). A content change deletes the vectors, registers again, and resets `attempts` to 0. Delete and archive remove vectors only. A missing original object becomes `FAILED` / `object_not_found` and is not retried. A missing photo preview retries, then becomes `SKIPPED` / `preview_missing`. A non-terminal HTTP error on delete or archive keeps `REMOVED` or `ARCHIVED`, increments `attempts`, and sets `next_attempt_at`. `404` and `409 file_busy` count as vectors gone.
+
+Admin retry moves a failed row that already has `rag_file_id` to `SUBMITTED` (poll). A row that never registered stays `PENDING` with a null id.
+
+Backfill is one pass. It also inserts archived Files and Photos that have no link as `SKIPPED` / `archived` and does not send them to RAG. `POST /api/admin/indexing/backfill` does not call `backfill` when `RAG_ENABLED` is false.
 
 ---
 
@@ -184,7 +203,8 @@ Encrypted adapter encrypts/decrypts names and payloads around the inner `Storage
 | Google OAuth 2.0 | Social login | State in Redis; ticket bridge to set cookie |
 | PostgreSQL | Metadata | Alembic migrations on startup |
 | Redis | Sessions / rate limits | Required for private unlock & OAuth |
-| MinIO | Blob storage | Buckets 1:1 with `STORAGE_DISKS`; app does not mount blob disk |
+| MinIO | Blob storage | One bucket `storage`. App does not mount a blob disk. See [ADR-011](./adr/ADR-011-shared-minio-bucket-with-rag.md) |
+| RAG edge | Vector index for Files and Photos | `http://rag-edge:8080` on external network `rag_edge`. Reads objects by key. Does not own them |
 | Caddy / Ingress (optional) | TLS | Outside core compose |
 
 ---
@@ -203,8 +223,25 @@ Root: `Settings` via `get_settings()` (`@lru_cache`).
 | `BusinessLogicSettings` | Photo batch, thumbnail size, stranger quota, archive days |
 | `AdminSettings` | `ADMIN_EMAIL`, `ADMIN_PASSWORD` (bootstrap) |
 | `LoggingSettings` | Level, optional file sink |
+| `RagSettings` | `settings.rag`. See the table below |
 
-Compose-only: `POSTGRES_*`. Frontend-only: `VITE_API_BASE_URL` (dev).
+Compose-only: `POSTGRES_*`. Frontend-only: `VITE_API_BASE_URL` (dev). `app` also joins external network `rag_edge`.
+
+`RagSettings` (`get_settings().rag`). One trailing slash is stripped from `RAG_BASE_URL`.
+
+| Variable | Default |
+|---|---|
+| `RAG_ENABLED` | `false` |
+| `RAG_BASE_URL` | `http://rag-edge:8080` |
+| `RAG_TIMEOUT_SECONDS` | `10` |
+| `RAG_SYNC_INTERVAL_SECONDS` | `60` |
+| `RAG_INDEX_BATCH_SIZE` | `20` |
+| `RAG_MAX_ATTEMPTS` | `8` |
+| `RAG_INDEX_MAX_WAIT_SECONDS` | `3600` |
+| `RAG_MAX_IMAGE_BYTES` | `10485760` |
+| `RAG_BACKFILL_ENABLED` | `false` |
+
+`RAG_ENABLED=false` creates no link rows, does not register `index_sync`, and does not run startup backfill. Photo search then returns `503 INDEXING_UNAVAILABLE` with no outbound call.
 
 ---
 
@@ -215,7 +252,8 @@ Compose-only: `POSTGRES_*`. Frontend-only: `VITE_API_BASE_URL` (dev).
 3. Auth rate limits; private unlock ≤5 attempts / window then `TOO_MANY_ATTEMPTS` (optional reset).
 4. Shared delete: owner or ADMIN only.
 5. Admin cannot change own role or delete self.
-6. Never log passphrase, JWT, or derived keys.
+6. Never log passphrase, JWT, derived keys, or document bytes. Index logs carry `user_id`, `file_record_id`, `rag_file_id`, `state`, and `error_code`.
+7. RAG calls send `X-Auth-User-Id` only. Private and encrypted bytes are refused before a row exists.
 
 ---
 
@@ -229,7 +267,7 @@ Health: `GET /`, `GET /health`. Admin: `GET /api/admin/storage/health`.
 
 ## 10. Deployment Topology
 
-**Docker Compose:** `app` (:8000), `frontend` (:80), `db`, `redis`, `minio` (:9000/:9001), `minio-init` (bucket bootstrap). App does not mount a blob disk; MinIO owns `/data`.
+**Docker Compose:** `app` joins `common_network`, `user_network`, `auth_network`, and external `rag_edge`. It does not join `rag_internal` and does not publish `:8000` as a second public edge. Blobs stay in the shared MinIO bucket `storage` ([ADR-011](./adr/ADR-011-shared-minio-bucket-with-rag.md)). App does not mount a blob disk.
 
 **Init:** `minio-init` (buckets), `scripts/init_db.py` (first ADMIN), Alembic upgrade on entrypoint.
 
@@ -242,7 +280,7 @@ Health: `GET /`, `GET /health`. Admin: `GET /api/admin/storage/health`.
 | Point | Intent |
 |---|---|
 | `upload_sessions` table | Chunked/resumable uploads |
-| `/search` endpoints | Filename/content search |
+| `/api/files/search` | Still `501`. Photo description search is `GET /api/photos/search` |
 | `DISK_STRATEGY` | Round-robin / priority |
 | Async thumbnail queue | Decouple upload latency |
 | Checksum scrubbing | Integrity audits |

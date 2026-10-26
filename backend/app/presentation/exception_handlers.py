@@ -22,6 +22,7 @@ from app.domain.exceptions import (
     StorageUnavailableError,
     UserServiceUnavailableError,
 )
+from app.domain.indexing import IndexingUnavailable, SearchQueryInvalid
 from app.domain.value_objects.error_codes import ErrorCode
 
 
@@ -279,6 +280,34 @@ def register_exception_handlers(app: FastAPI) -> None:
             {
                 "error_code": ErrorCode.GENERATED_META_INVALID,
                 "message": str(exc),
+            },
+        )
+
+    @app.exception_handler(SearchQueryInvalid)
+    async def search_query_invalid_handler(
+        _request: Request,
+        exc: SearchQueryInvalid,
+    ) -> JSONResponse:
+        logger.warning("Search query invalid: {}", exc)
+        return _error_response(
+            status.HTTP_400_BAD_REQUEST,
+            {
+                "error_code": ErrorCode.SEARCH_QUERY_INVALID,
+                "message": str(exc),
+            },
+        )
+
+    @app.exception_handler(IndexingUnavailable)
+    async def indexing_unavailable_handler(
+        _request: Request,
+        exc: IndexingUnavailable,
+    ) -> JSONResponse:
+        logger.warning("Indexing unavailable: {}", exc)
+        return _error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            {
+                "error_code": ErrorCode.INDEXING_UNAVAILABLE,
+                "message": str(exc) or "Search is unavailable right now",
             },
         )
 
